@@ -31,7 +31,7 @@ void Renderer::render(const Scene& scene, const Camera& camera) {
 
     const Material fallbackMaterial{};
     for (const ScenePrimitive& primitive : scene.primitives) {
-        if (primitive.mesh >= scene.meshes.size()) {
+        if (!primitive.visible || primitive.mesh >= scene.meshes.size()) {
             continue;
         }
 

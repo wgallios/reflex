@@ -22,11 +22,13 @@ glm::vec3 moveToward(const glm::vec3& current, const glm::vec3& target,
 
 bool PlayerController::initialize(const CollisionWorld& collisionWorld,
                                   const glm::vec3& spawnPosition,
-                                  const PlayerSettings& settings) {
+                                  const PlayerSettings& settings,
+                                  const DynamicCollisionWorld* dynamicCollision) {
     if (!settings.validate()) {
         return false;
     }
     collisionWorld_ = &collisionWorld;
+    dynamicCollisionWorld_ = dynamicCollision;
     settings_ = settings;
     position_ = spawnPosition;
     lastValidPosition_ = position_;
@@ -129,8 +131,7 @@ void PlayerController::moveAndSlide(glm::vec3 displacement, const bool allowStep
             break;
         }
         CollisionSweepHit hit;
-        if (!collisionWorld_->sweepCapsule(capsule(), displacement, hit,
-                                           &diagnostics_.collision)) {
+        if (!sweep(capsule(), displacement, hit)) {
             position_ += displacement;
             break;
         }
@@ -182,7 +183,7 @@ bool PlayerController::attemptStep(const glm::vec3& horizontalDisplacement) {
     const glm::vec3 original = position_;
     CollisionSweepHit hit;
     const glm::vec3 upward{0.0F, settings_.maximumStepHeight, 0.0F};
-    if (collisionWorld_->sweepCapsule(capsule(), upward, hit, &diagnostics_.collision)) {
+    if (sweep(capsule(), upward, hit)) {
         return false;
     }
     position_ += upward;
@@ -191,16 +192,15 @@ bool PlayerController::attemptStep(const glm::vec3& horizontalDisplacement) {
     if (horizontalLength > settings_.minimumMovementDistance) {
         stepHorizontal += stepHorizontal / horizontalLength * settings_.stepSearchDistance;
     }
-    if (collisionWorld_->sweepCapsule(capsule(), stepHorizontal, hit,
-                                      &diagnostics_.collision)) {
+    if (sweep(capsule(), stepHorizontal, hit)) {
         position_ = original;
         return false;
     }
     position_ += stepHorizontal;
     const glm::vec3 downward{0.0F, -(settings_.maximumStepHeight + settings_.groundSnapDistance),
                              0.0F};
-    if (!collisionWorld_->sweepCapsule(capsule(), downward, hit, &diagnostics_.collision,
-                                      std::cos(glm::radians(settings_.maximumSlopeAngleDegrees))) ||
+    if (!sweep(capsule(), downward, hit,
+               std::cos(glm::radians(settings_.maximumSlopeAngleDegrees))) ||
         !isWalkable(hit.normal)) {
         position_ = original;
         return false;
@@ -213,8 +213,7 @@ bool PlayerController::attemptStep(const glm::vec3& horizontalDisplacement) {
     }
     glm::vec3 overlapNormal{};
     float overlapDepth = 0.0F;
-    if (collisionWorld_->overlapCapsule(capsule(), overlapNormal, overlapDepth,
-                                        &diagnostics_.collision) &&
+    if (overlap(capsule(), overlapNormal, overlapDepth) &&
         overlapDepth > settings_.skinWidth) {
         position_ = original;
         return false;
@@ -233,8 +232,8 @@ void PlayerController::updateGround(const bool allowSnap) {
     CollisionSweepHit hit;
     const glm::vec3 downward{0.0F, -probeDistance, 0.0F};
     const bool wasGrounded = grounded_;
-    diagnostics_.groundProbeHit = collisionWorld_->sweepCapsule(
-        capsule(), downward, hit, &diagnostics_.collision,
+    diagnostics_.groundProbeHit = sweep(
+        capsule(), downward, hit,
         std::cos(glm::radians(settings_.maximumSlopeAngleDegrees)));
     grounded_ = diagnostics_.groundProbeHit && isWalkable(hit.normal) && velocity_.y <= 0.0F;
     if (grounded_) {
@@ -279,8 +278,7 @@ bool PlayerController::recoverPenetration() {
     for (int iteration = 0; iteration < settings_.maximumPenetrationIterations; ++iteration) {
         glm::vec3 normal{};
         float depth = 0.0F;
-        if (!collisionWorld_->overlapCapsule(capsule(), normal, depth,
-                                             &diagnostics_.collision)) {
+        if (!overlap(capsule(), normal, depth)) {
             return true;
         }
         const float correctionRemaining =
@@ -295,7 +293,7 @@ bool PlayerController::recoverPenetration() {
     }
     glm::vec3 normal{};
     float depth = 0.0F;
-    const bool resolved = !collisionWorld_->overlapCapsule(capsule(), normal, depth);
+    const bool resolved = !overlap(capsule(), normal, depth);
     if (!resolved) {
         std::cerr << "Warning: player penetration remains after recovery limit.\n";
     }
@@ -327,4 +325,53 @@ const PlayerSettings& PlayerController::settings() const noexcept { return setti
 const PlayerDiagnostics& PlayerController::diagnostics() const noexcept { return diagnostics_; }
 Capsule PlayerController::capsule() const noexcept {
     return Capsule{position_, settings_.capsuleHeight, settings_.capsuleRadius};
+}
+
+bool PlayerController::setPosition(const glm::vec3& position, const bool recover) {
+    position_ = position;
+    velocity_ = {};
+    grounded_ = false;
+    if (recover && !noclip_ && !recoverPenetration()) return false;
+    lastValidPosition_ = position_;
+    if (!noclip_) updateGround(true);
+    return true;
+}
+
+void PlayerController::setDynamicCollisionWorld(const DynamicCollisionWorld* world) noexcept {
+    dynamicCollisionWorld_ = world;
+}
+
+bool PlayerController::sweep(const Capsule& shape, const glm::vec3& displacement,
+                             CollisionSweepHit& hit, const float minimumUpDot) {
+    CollisionSweepHit staticHit;
+    CollisionSweepHit dynamicHit;
+    const bool hitStatic = collisionWorld_ != nullptr && collisionWorld_->sweepCapsule(
+        shape, displacement, staticHit, &diagnostics_.collision, minimumUpDot);
+    const bool hitDynamic = dynamicCollisionWorld_ != nullptr &&
+        dynamicCollisionWorld_->sweepCapsule(shape, displacement, dynamicHit) &&
+        glm::dot(dynamicHit.normal, glm::vec3{0.0F, 1.0F, 0.0F}) >= minimumUpDot;
+    if (!hitStatic && !hitDynamic) return false;
+    hit = !hitStatic || (hitDynamic && dynamicHit.fraction < staticHit.fraction)
+        ? dynamicHit : staticHit;
+    return true;
+}
+
+bool PlayerController::overlap(const Capsule& shape, glm::vec3& normal, float& depth) {
+    glm::vec3 staticNormal{};
+    float staticDepth = 0.0F;
+    glm::vec3 dynamicNormal{};
+    float dynamicDepth = 0.0F;
+    const bool hitStatic = collisionWorld_ != nullptr && collisionWorld_->overlapCapsule(
+        shape, staticNormal, staticDepth, &diagnostics_.collision);
+    const bool hitDynamic = dynamicCollisionWorld_ != nullptr &&
+        dynamicCollisionWorld_->overlapCapsule(shape, &dynamicNormal, &dynamicDepth);
+    if (!hitStatic && !hitDynamic) return false;
+    if (!hitStatic || (hitDynamic && dynamicDepth > staticDepth)) {
+        normal = dynamicNormal;
+        depth = dynamicDepth;
+    } else {
+        normal = staticNormal;
+        depth = staticDepth;
+    }
+    return true;
 }

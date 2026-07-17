@@ -6,10 +6,11 @@ Reflex Engine is a small C++20, cross-platform 3D engine for first-person
 shooters inspired by the 1999-2004 era. Linux is the primary development target,
 but changes should remain portable to Windows.
 
-The current implementation is Phase 3: an SDL3/OpenGL 3.3 Core platform shell
+The current implementation is Phase 4: an SDL3/OpenGL 3.3 Core platform shell
 that renders static Blender-exported `.glb` environments and provides a
-collision-aware kinematic FPS controller plus noclip debugging. Preserve this
-working behavior when extending the engine.
+collision-aware kinematic FPS controller plus a typed interactive-world layer,
+HUD, and JSON quick save/load. Preserve this working behavior when extending
+the engine.
 
 ## Build and validation
 
@@ -58,6 +59,10 @@ compiler warnings.
 - `PlayerController` holds a non-owning collision-world reference and owns
   kinematic position, velocity, grounding, steps, and noclip mode.
 - `DebugDraw` owns the dynamic OpenGL line buffer used by F3 diagnostics.
+- `GameplayWorld` owns typed entities, deterministic event queues, inventory,
+  vitals, checkpoints, and persistent gameplay state.
+- `DynamicCollisionWorld` owns the small direct-iteration AABB set used by doors.
+- `HudRenderer` owns the code-defined 5x7 screen-space text renderer.
 - `Shader`, `Mesh`, and `Texture` are move-only RAII wrappers for OpenGL objects.
 - `Scene` owns GPU scene resources, draw instances, collision data, and spawn data.
 
@@ -91,7 +96,7 @@ render interfaces, or other speculative abstractions.
 
 Runtime shaders live in `assets/shaders/`. The default scene is
 `assets/levels/test_scene.glb`. The build copies `assets/` beside the executable.
-Regenerate the Phase 3 collision course with:
+Regenerate the Phase 4 interaction/collision course with:
 
 ```bash
 python3 tools/generate_test_scene.py
@@ -110,13 +115,15 @@ implementation macros in headers.
 
 ## Scope boundary
 
-Phase 3 stops at static-world kinematic FPS movement. Do not add later gameplay
-or general physics features unless the user explicitly requests a new phase.
+Phase 4 stops at interactive-world foundations. Do not add combat, AI, or
+general physics features unless the user explicitly requests a new phase.
 Out-of-scope systems currently include:
 
-- trigger volumes, moving platforms/doors, and rigid-body physics;
-- weapons, firing, damage, health, enemies, AI, and pickups;
-- scripting, save/load, an editor, or an ECS.
+- moving platforms/elevators and rigid-body physics;
+- weapons, firing, projectiles, enemies, AI, and combat damage;
+- scripting, multiplayer, an editor, or an ECS.
 
 Keep collision math and movement separate from rendering. New pure geometry
 behavior should have coverage in `reflex_engine_collision_tests`.
+Pure gameplay and persistence behavior belongs in
+`reflex_engine_gameplay_tests`.

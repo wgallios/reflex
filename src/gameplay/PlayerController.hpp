@@ -1,6 +1,7 @@
 #pragma once
 
 #include "collision/CollisionWorld.hpp"
+#include "collision/DynamicCollisionWorld.hpp"
 #include "gameplay/PlayerSettings.hpp"
 
 #include <glm/vec3.hpp>
@@ -31,12 +32,15 @@ class PlayerController {
 public:
     [[nodiscard]] bool initialize(const CollisionWorld& collisionWorld,
                                   const glm::vec3& spawnPosition,
-                                  const PlayerSettings& settings = {});
+                                  const PlayerSettings& settings = {},
+                                  const DynamicCollisionWorld* dynamicCollision = nullptr);
     void simulate(float deltaTime, const PlayerInput& input,
                   const glm::vec3& viewForward, const glm::vec3& viewRight);
     void beginDiagnosticsFrame() noexcept;
     [[nodiscard]] bool toggleNoclip();
     [[nodiscard]] bool recoverPenetration();
+    [[nodiscard]] bool setPosition(const glm::vec3& position, bool recover = true);
+    void setDynamicCollisionWorld(const DynamicCollisionWorld* world) noexcept;
 
     [[nodiscard]] const glm::vec3& position() const noexcept;
     [[nodiscard]] glm::vec3 cameraPosition() const noexcept;
@@ -59,8 +63,12 @@ private:
     void updateGround(bool allowSnap);
     [[nodiscard]] bool isWalkable(const glm::vec3& normal) const noexcept;
     void addContact(const glm::vec3& point, const glm::vec3& normal) noexcept;
+    [[nodiscard]] bool sweep(const Capsule& capsule, const glm::vec3& displacement,
+                             CollisionSweepHit& hit, float minimumUpDot = -2.0F);
+    [[nodiscard]] bool overlap(const Capsule& capsule, glm::vec3& normal, float& depth);
 
     const CollisionWorld* collisionWorld_{nullptr};
+    const DynamicCollisionWorld* dynamicCollisionWorld_{nullptr};
     PlayerSettings settings_{};
     glm::vec3 position_{};
     glm::vec3 lastValidPosition_{};

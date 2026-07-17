@@ -9,6 +9,7 @@
 
 class Camera;
 struct Capsule;
+struct AABB;
 
 class DebugDraw {
 public:
@@ -25,6 +26,7 @@ public:
     void circle(const glm::vec3& center, float radius, int axis,
                 const glm::vec3& color, int segments = 20);
     void capsule(const Capsule& capsule, const glm::vec3& color);
+    void box(const AABB& bounds, const glm::vec3& color);
     void render(const Camera& camera);
 
 private:
@@ -39,4 +41,3 @@ private:
     unsigned int vertexBuffer_{0};
     std::vector<Vertex> vertices_;
 };
-

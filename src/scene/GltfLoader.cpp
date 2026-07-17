@@ -18,6 +18,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cctype>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -28,6 +29,7 @@
 #include <optional>
 #include <span>
 #include <string>
+#include <string_view>
 #include <type_traits>
 #include <vector>
 
@@ -415,6 +417,16 @@ bool nodeCollisionEnabled(const tinygltf::Node& node) {
     if (node.name.rfind("nocollide_", 0) == 0) {
         return false;
     }
+    if (node.name.rfind("door_", 0) == 0 || node.name.rfind("pickup_", 0) == 0) {
+        return false;
+    }
+    if (node.extras.IsObject() && node.extras.Has("gameplay_type")) {
+        const tinygltf::Value& value = node.extras.Get("gameplay_type");
+        if (value.IsString()) {
+            const std::string& type = value.Get<std::string>();
+            if (type == "door" || type == "pickup") return false;
+        }
+    }
     if (node.extras.IsObject() && node.extras.Has("collision")) {
         const tinygltf::Value& value = node.extras.Get("collision");
         if (value.IsBool()) {
@@ -422,6 +434,160 @@ bool nodeCollisionEnabled(const tinygltf::Node& node) {
         }
     }
     return true;
+}
+
+const tinygltf::Value* extra(const tinygltf::Node& node, const std::string& name) {
+    return node.extras.IsObject() && node.extras.Has(name)
+        ? &node.extras.Get(name) : nullptr;
+}
+
+std::string extraString(const tinygltf::Node& node, const std::string& name,
+                        std::string fallback = {}) {
+    const tinygltf::Value* value = extra(node, name);
+    return value != nullptr && value->IsString() ? value->Get<std::string>() : fallback;
+}
+
+bool extraBool(const tinygltf::Node& node, const std::string& name, const bool fallback) {
+    const tinygltf::Value* value = extra(node, name);
+    return value != nullptr && value->IsBool() ? value->Get<bool>() : fallback;
+}
+
+float extraFloat(const tinygltf::Node& node, const std::string& name, const float fallback) {
+    const tinygltf::Value* value = extra(node, name);
+    return value != nullptr && value->IsNumber()
+        ? static_cast<float>(value->GetNumberAsDouble()) : fallback;
+}
+
+glm::vec3 extraVec3(const tinygltf::Node& node, const std::string& name,
+                    const glm::vec3& fallback) {
+    const tinygltf::Value* value = extra(node, name);
+    if (value == nullptr || !value->IsArray() || value->ArrayLen() != 3) return fallback;
+    glm::vec3 result{};
+    for (int component = 0; component < 3; ++component) {
+        const tinygltf::Value& entry = value->Get(component);
+        if (!entry.IsNumber()) return fallback;
+        result[component] = static_cast<float>(entry.GetNumberAsDouble());
+    }
+    return result;
+}
+
+std::optional<GameplayEntityType> gameplayType(const tinygltf::Node& node) {
+    std::string type = extraString(node, "gameplay_type");
+    if (type.empty()) {
+        constexpr std::pair<std::string_view, GameplayEntityType> prefixes[] = {
+            {"door_", GameplayEntityType::Door}, {"switch_", GameplayEntityType::Switch},
+            {"trigger_", GameplayEntityType::Trigger}, {"pickup_", GameplayEntityType::Pickup},
+            {"damage_", GameplayEntityType::DamageVolume},
+            {"checkpoint_", GameplayEntityType::Checkpoint}};
+        for (const auto& [prefix, candidate] : prefixes) {
+            if (node.name.rfind(prefix, 0) == 0) return candidate;
+        }
+        return std::nullopt;
+    }
+    if (type == "door") return GameplayEntityType::Door;
+    if (type == "switch") return GameplayEntityType::Switch;
+    if (type == "trigger") return GameplayEntityType::Trigger;
+    if (type == "pickup") return GameplayEntityType::Pickup;
+    if (type == "damage_volume") return GameplayEntityType::DamageVolume;
+    if (type == "checkpoint") return GameplayEntityType::Checkpoint;
+    std::cerr << "Warning: unknown gameplay_type '" << type << "' on node '"
+              << node.name << "'.\n";
+    return std::nullopt;
+}
+
+GameplayEventType eventType(const std::string& name, const GameplayEventType fallback) {
+    if (name == "activate") return GameplayEventType::Activate;
+    if (name == "deactivate") return GameplayEventType::Deactivate;
+    if (name == "toggle") return GameplayEventType::Toggle;
+    if (name == "open") return GameplayEventType::Open;
+    if (name == "close") return GameplayEventType::Close;
+    if (name == "lock") return GameplayEventType::Lock;
+    if (name == "unlock") return GameplayEventType::Unlock;
+    return fallback;
+}
+
+std::optional<GameplayEntityDefinition> gameplayDefinition(
+    const tinygltf::Node& node, const glm::mat4& worldTransform,
+    std::vector<std::size_t> primitiveIndices) {
+    const std::optional<GameplayEntityType> type = gameplayType(node);
+    if (!type) return std::nullopt;
+    GameplayEntityDefinition definition;
+    definition.type = *type;
+    definition.name = extraString(node, "entity_name", node.name);
+    if (definition.name.empty()) {
+        std::cerr << "Warning: gameplay node without entity_name or node name was disabled.\n";
+        return std::nullopt;
+    }
+    definition.id = stableEntityId(definition.name);
+    const tinygltf::Value* explicitId = extra(node, "entity_id");
+    if (explicitId != nullptr && explicitId->IsNumber()) {
+        const double number = explicitId->GetNumberAsDouble();
+        if (number > 0.0) definition.id = static_cast<EntityId>(number);
+    } else if (explicitId != nullptr && explicitId->IsString()) {
+        definition.id = stableEntityId(explicitId->Get<std::string>());
+    }
+    definition.authoredWorldTransform = worldTransform;
+    definition.primitiveIndices = std::move(primitiveIndices);
+    definition.targetName = extraString(node, "target_name");
+    definition.boxOffset = extraVec3(node, "collider_offset", glm::vec3{0.0F});
+    const glm::vec3 colliderSize = extraVec3(node, "collider_size", glm::vec3{1.0F});
+    definition.boxSize = extraVec3(node, "trigger_size", colliderSize);
+    definition.oneShot = extraBool(node, "one_shot", extraBool(node, "once", false));
+    definition.requiredKey = extraString(node, "required_key");
+    definition.enterEvent = eventType(extraString(node, "on_enter",
+        extraString(node, "event", "activate")), GameplayEventType::Activate);
+    definition.exitEvent = eventType(extraString(node, "on_exit", "deactivate"),
+                                     GameplayEventType::Deactivate);
+    definition.moveAxis = extraVec3(node, "move_axis", glm::vec3{0.0F, 1.0F, 0.0F});
+    definition.moveDistance = extraFloat(node, "move_distance", 2.0F);
+    definition.openSpeed = extraFloat(node, "open_speed", extraFloat(node, "move_speed", 1.5F));
+    definition.closeSpeed = extraFloat(node, "close_speed", definition.openSpeed);
+    definition.autoCloseDelay = extraFloat(node, "auto_close_delay", 0.0F);
+    definition.startsOpen = extraBool(node, "starts_open", false);
+    definition.startsLocked = extraBool(node, "locked", false);
+    definition.toggleMode = extraBool(node, "toggle_mode", true);
+    definition.pickupType = extraString(node, "pickup_type");
+    definition.itemId = extraString(node, "item_id");
+    definition.displayName = extraString(node, "display_name", definition.name);
+    definition.amount = static_cast<int>(extraFloat(node, "amount", 0.0F));
+    definition.damagePerSecond = extraFloat(node, "damage_per_second", 0.0F);
+    definition.bypassArmor = extraBool(node, "bypass_armor", false);
+    definition.restoreHealth = static_cast<int>(extraFloat(node, "restore_health", 100.0F));
+    definition.restoreArmor = static_cast<int>(extraFloat(node, "restore_armor", 0.0F));
+
+    if (glm::any(glm::lessThanEqual(definition.boxSize, glm::vec3{0.0F}))) {
+        std::cerr << "Warning: entity '" << definition.name
+                  << "' has invalid box dimensions and was disabled.\n";
+        return std::nullopt;
+    }
+    if (*type == GameplayEntityType::Door &&
+        (definition.moveDistance <= 0.0F || definition.openSpeed <= 0.0F ||
+         definition.closeSpeed <= 0.0F || glm::length(definition.moveAxis) < 0.000001F)) {
+        std::cerr << "Warning: door '" << definition.name
+                  << "' has invalid motion settings and was disabled.\n";
+        return std::nullopt;
+    }
+    definition.moveAxis = glm::normalize(definition.moveAxis);
+    const bool knownPickup = definition.pickupType == "key" ||
+        definition.pickupType == "health" || definition.pickupType == "armor";
+    const bool validKey = !definition.itemId.empty() && definition.itemId.size() <= 64 &&
+        std::all_of(definition.itemId.begin(), definition.itemId.end(), [](const char character) {
+            return std::isalnum(static_cast<unsigned char>(character)) != 0 ||
+                   character == '_' || character == '-';
+        });
+    if (*type == GameplayEntityType::Pickup &&
+        (!knownPickup || (definition.pickupType == "key" && !validKey) ||
+         (definition.pickupType != "key" && definition.amount <= 0))) {
+        std::cerr << "Warning: pickup '" << definition.name
+                  << "' has invalid pickup properties and was disabled.\n";
+        return std::nullopt;
+    }
+    if (*type == GameplayEntityType::DamageVolume && definition.damagePerSecond <= 0.0F) {
+        std::cerr << "Warning: damage volume '" << definition.name
+                  << "' has non-positive damage and was disabled.\n";
+        return std::nullopt;
+    }
+    return definition;
 }
 
 bool isPlayerSpawn(const tinygltf::Node& node) {
@@ -620,6 +786,7 @@ bool GltfLoader::loadGlb(const std::filesystem::path& path, Scene& scene) const 
         recursionStack[static_cast<std::size_t>(nodeIndex)] = true;
         const tinygltf::Node& node = model.nodes[static_cast<std::size_t>(nodeIndex)];
         const glm::mat4 worldTransform = parentTransform * nodeLocalTransform(node);
+        std::vector<std::size_t> nodePrimitiveIndices;
 
         if (isPlayerSpawn(node) && !newScene.hasPlayerSpawn) {
             newScene.playerSpawnPosition = glm::vec3{worldTransform[3]};
@@ -638,6 +805,7 @@ bool GltfLoader::loadGlb(const std::filesystem::path& path, Scene& scene) const 
             const auto& sourcePrimitives = model.meshes[static_cast<std::size_t>(node.mesh)].primitives;
             for (std::size_t i = 0; i < primitiveMap.size(); ++i) {
                 if (primitiveMap[i].has_value()) {
+                    nodePrimitiveIndices.push_back(newScene.primitives.size());
                     newScene.primitives.push_back(ScenePrimitive{
                         *primitiveMap[i], sourcePrimitives[i].material, worldTransform});
                 }
@@ -666,6 +834,11 @@ bool GltfLoader::loadGlb(const std::filesystem::path& path, Scene& scene) const 
             }
         } else if (node.mesh >= 0) {
             std::cerr << "Warning: a node references an invalid mesh.\n";
+        }
+
+        if (auto definition = gameplayDefinition(node, worldTransform,
+                                                  std::move(nodePrimitiveIndices))) {
+            newScene.gameplayEntities.push_back(std::move(*definition));
         }
 
         for (const int child : node.children) {
@@ -707,6 +880,7 @@ bool GltfLoader::loadGlb(const std::filesystem::path& path, Scene& scene) const 
               << "  textures:         " << model.textures.size() << '\n'
               << "  uploaded vertices: " << statistics.vertices << '\n'
               << "  uploaded indices: " << statistics.indices << '\n';
+    std::cout << "  gameplay metadata:" << scene.gameplayEntities.size() << '\n';
     std::cout << "  player spawn:     (" << scene.playerSpawnPosition.x << ", "
               << scene.playerSpawnPosition.y << ", " << scene.playerSpawnPosition.z
               << ")\n";

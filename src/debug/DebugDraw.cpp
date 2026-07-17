@@ -92,6 +92,20 @@ void DebugDraw::capsule(const Capsule& shape, const glm::vec3& color) {
          top - glm::vec3{0.0F, 0.0F, shape.radius}, color);
 }
 
+void DebugDraw::box(const AABB& bounds, const glm::vec3& color) {
+    const glm::vec3 a{bounds.minimum.x, bounds.minimum.y, bounds.minimum.z};
+    const glm::vec3 b{bounds.maximum.x, bounds.minimum.y, bounds.minimum.z};
+    const glm::vec3 c{bounds.maximum.x, bounds.minimum.y, bounds.maximum.z};
+    const glm::vec3 d{bounds.minimum.x, bounds.minimum.y, bounds.maximum.z};
+    const glm::vec3 e{bounds.minimum.x, bounds.maximum.y, bounds.minimum.z};
+    const glm::vec3 f{bounds.maximum.x, bounds.maximum.y, bounds.minimum.z};
+    const glm::vec3 g{bounds.maximum.x, bounds.maximum.y, bounds.maximum.z};
+    const glm::vec3 h{bounds.minimum.x, bounds.maximum.y, bounds.maximum.z};
+    line(a,b,color); line(b,c,color); line(c,d,color); line(d,a,color);
+    line(e,f,color); line(f,g,color); line(g,h,color); line(h,e,color);
+    line(a,e,color); line(b,f,color); line(c,g,color); line(d,h,color);
+}
+
 void DebugDraw::render(const Camera& camera) {
     if (vertices_.empty() || vertexArray_ == 0) {
         return;

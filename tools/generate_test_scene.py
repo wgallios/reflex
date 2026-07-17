@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate Reflex Engine's original, dependency-free Phase 3 collision test GLB."""
+"""Generate Reflex Engine's dependency-free Phase 4 collision/gameplay test GLB."""
 
 import json
 import pathlib
@@ -127,7 +127,7 @@ box("wall_east", [11.5, 2, 0], [0.5, 2, 12])
 box("wall_north", [0, 2, -11.5], [12, 2, 0.5])
 box("wall_south_left", [-7, 2, 11.5], [5, 2, 0.5])
 box("wall_south_right", [7, 2, 11.5], [5, 2, 0.5])
-box("door_header", [0, 3.5, 11.5], [2, 0.5, 0.5])
+box("arch_header", [0, 3.5, 11.5], [2, 0.5, 0.5])
 box("low_ceiling", [-7, 2.25, 5], [3, 0.2, 3])
 box("corridor_left", [5, 1.5, 5], [0.25, 1.5, 3])
 box("corridor_right", [7, 1.5, 5], [0.25, 1.5, 3])
@@ -155,10 +155,55 @@ box("steep_ramp", [3, 1.25, -5], [1.5, 0.12, 1.5],
 box("visual_marker", [0, 1.5, 7], [0.25, 0.25, 0.25],
     extras={"collision": False})
 
+# Phase 4 interactive-world course. Box sizes in gameplay metadata are full extents.
+box("door_direct", [0, 1.5, 5.5], [1.4, 1.5, 0.2], extras={
+    "gameplay_type": "door", "entity_name": "door_direct",
+    "collider_size": [2.8, 3.0, 0.4], "move_axis": [1, 0, 0],
+    "move_distance": 3.0, "open_speed": 1.8, "close_speed": 1.5,
+    "auto_close_delay": 3.0})
+box("door_switch", [-7.5, 1.5, 1.0], [0.2, 1.5, 1.4], extras={
+    "gameplay_type": "door", "collider_size": [0.4, 3.0, 2.8],
+    "move_axis": [0, 1, 0], "move_distance": 3.2})
+box("switch_security", [-4.5, 1.0, 3.0], [0.3, 0.3, 0.15], extras={
+    "gameplay_type": "switch", "target_name": "door_switch", "event": "toggle",
+    "collider_size": [0.8, 0.8, 0.5]})
+box("door_auto", [6.0, 1.5, 1.0], [0.2, 1.5, 1.0], extras={
+    "gameplay_type": "door", "collider_size": [0.4, 3.0, 2.0],
+    "move_axis": [0, 1, 0], "move_distance": 3.2, "toggle_mode": False})
+nodes.append({"name": "trigger_auto_door", "translation": [6.0, 1.0, 3.0], "extras": {
+    "gameplay_type": "trigger", "trigger_size": [3.0, 2.0, 3.0],
+    "target_name": "door_auto", "on_enter": "open", "on_exit": "close"}})
+box("door_locked_blue", [-2.0, 1.5, -1.5], [1.2, 1.5, 0.2], extras={
+    "gameplay_type": "door", "collider_size": [2.4, 3.0, 0.4],
+    "move_axis": [1, 0, 0], "move_distance": 2.7, "locked": True,
+    "required_key": "blue_key"})
+box("pickup_blue_key", [-4.0, 0.4, 4.0], [0.2, 0.2, 0.2], extras={
+    "gameplay_type": "pickup", "pickup_type": "key", "item_id": "blue_key",
+    "display_name": "Blue Key", "trigger_size": [0.8, 0.8, 0.8]})
+box("pickup_health_small", [2.0, 0.25, 3.5], [0.25, 0.25, 0.25], extras={
+    "gameplay_type": "pickup", "pickup_type": "health", "amount": 25,
+    "display_name": "Health Kit", "trigger_size": [0.8, 0.8, 0.8]})
+box("pickup_armor_small", [3.0, 0.25, 3.5], [0.25, 0.25, 0.25], extras={
+    "gameplay_type": "pickup", "pickup_type": "armor", "amount": 25,
+    "display_name": "Armor", "trigger_size": [0.8, 0.8, 0.8]})
+box("damage_lava", [0.0, 0.05, -3.0], [2.0, 0.05, 1.5], extras={
+    "gameplay_type": "damage_volume", "trigger_size": [4.0, 0.8, 3.0],
+    "collider_offset": [0, 0.35, 0], "damage_per_second": 35.0,
+    "damage_type": "environmental", "bypass_armor": False})
+nodes.append({"name": "checkpoint_start", "translation": [0, 0.9, 7.5], "extras": {
+    "gameplay_type": "checkpoint", "trigger_size": [2.0, 1.8, 2.0],
+    "restore_health": 100, "restore_armor": 0}})
+nodes.append({"name": "checkpoint_after_lava", "translation": [0, 0.9, -5.0], "extras": {
+    "gameplay_type": "checkpoint", "trigger_size": [2.0, 1.8, 2.0],
+    "restore_health": 100, "restore_armor": 25}})
+box("switch_one_shot", [4.0, 1.0, -2.0], [0.3, 0.3, 0.15], extras={
+    "gameplay_type": "switch", "target_name": "door_direct", "event": "open",
+    "one_shot": True, "collider_size": [0.8, 0.8, 0.5]})
+
 document = {
     "asset": {"version": "2.0", "generator": "Reflex Engine test scene generator"},
     "scene": 0,
-    "scenes": [{"name": "Phase 3 Collision Course", "nodes": list(range(len(nodes)))}],
+    "scenes": [{"name": "Phase 4 Interaction Course", "nodes": list(range(len(nodes)))}],
     "nodes": nodes,
     "meshes": [
         {"name": "Floor", "primitives": [{"attributes": {"POSITION": 0, "NORMAL": 1,

@@ -12,7 +12,9 @@ public:
     void setAspectRatio(float aspectRatio) noexcept;
     void setPosition(const glm::vec3& position) noexcept;
     void setYawDegrees(float yawDegrees) noexcept;
+    void setPitchDegrees(float pitchDegrees) noexcept;
     [[nodiscard]] float yawDegrees() const noexcept;
+    [[nodiscard]] float pitchDegrees() const noexcept;
 
     [[nodiscard]] glm::mat4 viewMatrix() const;
     [[nodiscard]] glm::mat4 projectionMatrix() const;

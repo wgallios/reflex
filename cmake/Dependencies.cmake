@@ -54,7 +54,17 @@ FetchContent_Declare(
     GIT_PROGRESS TRUE
 )
 
-FetchContent_MakeAvailable(SDL3 glad glm tinygltf stb)
+FetchContent_Declare(
+    nlohmann_json
+    GIT_REPOSITORY https://github.com/nlohmann/json.git
+    GIT_TAG v3.11.3
+    GIT_SHALLOW TRUE
+    GIT_PROGRESS TRUE
+)
+
+set(JSON_BuildTests OFF CACHE BOOL "Do not build nlohmann/json tests" FORCE)
+set(JSON_Install OFF CACHE BOOL "Do not install nlohmann/json" FORCE)
+FetchContent_MakeAvailable(SDL3 glad glm tinygltf stb nlohmann_json)
 
 # Generate only the OpenGL API this phase uses. REPRODUCIBLE makes GLAD use its
 # bundled Khronos specification snapshot instead of downloading one at configure time.

@@ -55,7 +55,11 @@ void Camera::setAspectRatio(const float aspectRatio) noexcept {
 
 void Camera::setPosition(const glm::vec3& position) noexcept { position_ = position; }
 void Camera::setYawDegrees(const float yawDegrees) noexcept { yawDegrees_ = yawDegrees; }
+void Camera::setPitchDegrees(const float pitchDegrees) noexcept {
+    pitchDegrees_ = glm::clamp(pitchDegrees, -89.0F, 89.0F);
+}
 float Camera::yawDegrees() const noexcept { return yawDegrees_; }
+float Camera::pitchDegrees() const noexcept { return pitchDegrees_; }
 
 glm::mat4 Camera::viewMatrix() const {
     return glm::lookAt(position_, position_ + forward(), up());

@@ -1,0 +1,48 @@
+#pragma once
+
+#include "gameplay/GameplayWorld.hpp"
+
+#include <filesystem>
+#include <optional>
+#include <string>
+#include <unordered_map>
+#include <vector>
+
+struct SavedEntityState {
+    bool active{true};
+    bool completed{false};
+    bool collected{false};
+    bool activated{false};
+    bool locked{false};
+    DoorState doorState{DoorState::Closed};
+    float doorProgress{0.0F};
+};
+
+struct SaveGameData {
+    static constexpr int currentFormatVersion = 1;
+    int formatVersion{currentFormatVersion};
+    std::string levelPath;
+    glm::vec3 playerPosition{};
+    float playerYaw{0.0F};
+    float playerPitch{0.0F};
+    int health{100};
+    int armor{0};
+    std::vector<std::string> keys;
+    RespawnPoint checkpoint{};
+    std::unordered_map<std::string, SavedEntityState> entities;
+};
+
+class SaveGame {
+public:
+    [[nodiscard]] static SaveGameData capture(const std::string& levelPath,
+                                              const GameplayWorld& gameplay,
+                                              const glm::vec3& playerPosition,
+                                              float yaw, float pitch);
+    [[nodiscard]] static bool write(const std::filesystem::path& path,
+                                    const SaveGameData& data, std::string& error);
+    [[nodiscard]] static std::optional<SaveGameData> read(
+        const std::filesystem::path& path, std::string& error);
+    [[nodiscard]] static bool apply(const SaveGameData& data, GameplayWorld& gameplay,
+                                    std::string& error);
+};
+

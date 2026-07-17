@@ -4,18 +4,18 @@ Reflex Engine is a small C++20, cross-platform 3D game engine for first-person
 shooters inspired by the 1999-2004 era. Linux is the first target; SDL and CMake
 keep the platform shell portable to Windows.
 
-## Phase 3 scope
+## Phase 4 scope
 
-Phase 3 adds a purpose-built kinematic FPS controller to the existing SDL3 and
-OpenGL platform/rendering shell. Static triangles are extracted from the loaded
-GLB once, transformed into world space, and indexed by a deterministic BVH. The
-player uses a vertical capsule approximation with swept collision, iterative
-plane sliding, gravity, jumping, walkable-slope classification, ground snapping,
-step handling, limited penetration recovery, noclip switching, and debug lines.
+Phase 4 adds a deliberately small, data-driven interactive-world layer to the
+existing renderer and kinematic FPS controller. Blender custom properties create
+stable gameplay entities for sliding doors, switches, triggers, key/health/armor
+pickups, hazards, and checkpoints. Interaction uses an occlusion-tested center
+ray. HUD feedback, death/respawn, and a versioned JSON quick-save slot complete
+the early-FPS environment loop.
 
-This remains deliberately smaller than a general physics engine. Collision is
-static only. Weapons, enemies, damage, pickups, triggers, moving platforms,
-rigid bodies, scripting, an ECS, and an editor are not included.
+This remains deliberately smaller than an ECS, scripting system, or general
+physics engine. Combat, weapons, enemies, AI, rigid bodies, moving platforms,
+level transitions, audio, scripting, and an editor are not included.
 
 ## Dependencies
 
@@ -26,6 +26,7 @@ CMake downloads pinned source dependencies with `FetchContent`:
 - GLM 1.0.3 (`1.0.3`)
 - tinygltf 2.9.7 (`v2.9.7`)
 - stb at commit `31c1ad37456438565541f4919958214b6e762fb4`
+- nlohmann/json 3.11.3 (`v3.11.3`) for validated save files
 
 `GltfLoader.cpp` is the only translation unit that defines
 `TINYGLTF_IMPLEMENTATION`, `STB_IMAGE_IMPLEMENTATION`, and
@@ -98,6 +99,11 @@ Click the window to capture the pointer. While captured:
 - `Left Shift`: sprint
 - `N`: toggle collision-aware FPS movement and noclip
 - `F3`: toggle collision lines and rate-limited diagnostics
+- `E`: interact with the targeted door or switch
+- `F4`: toggle gameplay bounds and entity inspection
+- `F5`: write `saves/quicksave.json`
+- `F6`: reset authored level/gameplay state
+- `F9`: validate and load `saves/quicksave.json`
 - `Escape`: release the pointer
 
 In noclip mode, `Space` and `Left Ctrl` move up and down. Switching back to
@@ -117,13 +123,17 @@ assets/
 │   └── test_scene.glb
 └── shaders/
     ├── static_mesh.vert
-    └── static_mesh.frag
+    ├── static_mesh.frag
+    ├── debug_line.vert / debug_line.frag
+    └── hud.vert / hud.frag
 ```
 
 The included test scene is original and generated locally. It contains a floor,
 enclosing walls, doorway, low ceiling, stairs, two ledge heights, walkable and
 steep ramps, corridor/corner tests, a fall platform, a spawn marker, and a
-visual-only object excluded through glTF extras. It retains embedded texture,
+visual-only object excluded through glTF extras, five sliding doors, switches,
+an automatic trigger door, a blue key, health/armor pickups, a damage floor,
+and two checkpoints. It retains embedded texture,
 interleaved-attribute, and 8-/16-bit index coverage. Regenerate it with:
 
 ```bash
@@ -164,6 +174,110 @@ glTF extras.
 All triangle primitives collide by default. A node is visual-only when its name
 starts with `nocollide_` or its glTF extras contain `"collision": false`.
 The extras rule takes precedence for normally named objects.
+
+## Authoring Phase 4 gameplay
+
+In Blender, select a mesh object or Empty, open **Object Properties -> Custom
+Properties**, add the properties below, and enable **Include -> Custom
+Properties** in the glTF exporter. Export with **File -> Export -> glTF 2.0 ->
+glTF Binary (.glb)**. Mesh objects are appropriate for visible doors, switches,
+and pickups. Empties are appropriate for triggers and checkpoints. Apply mesh
+transforms with `Ctrl+A -> All Transforms` before export.
+
+Every gameplay node needs `gameplay_type`. `entity_name` is optional when the
+Blender object name is unique. IDs are the deterministic 64-bit FNV-1a hash of
+that authored name; `entity_id` may provide an explicit positive number or
+string identity. Duplicate IDs/names disable only the duplicate. Target links
+use `target_name` and are resolved once after loading. The prefixes `door_`,
+`switch_`, `trigger_`, `pickup_`, `damage_`, and `checkpoint_` are fallbacks,
+but exported extras are authoritative.
+
+All sizes are full extents in meters, not half extents. Runtime bounds are
+axis-aligned. `collider_offset` is local to the authored node. Interactive
+visuals retain the authored world matrix; a door applies a runtime translation
+before that matrix. Door primitives therefore move with their dynamic collider.
+Door and pickup meshes are omitted from the static triangle BVH.
+
+### Supported metadata
+
+Door (`gameplay_type = door`):
+
+```text
+collider_size       [x,y,z], required in practical authored levels
+collider_offset     [x,y,z], default [0,0,0]
+move_axis           [x,y,z], default [0,1,0]
+move_distance       meters, default 2
+open_speed          m/s, default 1.5
+close_speed         m/s, default open_speed
+auto_close_delay    seconds, 0 disables
+starts_open         boolean
+locked              boolean
+required_key        string such as blue_key
+toggle_mode         boolean, default true
+```
+
+Only sliding doors are supported. Motion clamps exactly to endpoints. Repeated
+open/close events are idempotent. A closing door that would overlap the player
+enters `Blocked`, waits 0.35 seconds, then reopens. Door collision is a simple
+dynamic AABB collection iterated directly; the static BVH is never rebuilt.
+
+Switch (`gameplay_type = switch`): `target_name`, `event` (`activate`,
+`deactivate`, `toggle`, `open`, `close`, `lock`, or `unlock`), optional
+`required_key`, `one_shot`, and `collider_size`. Trigger
+(`gameplay_type = trigger`): `trigger_size`, `target_name`, `on_enter`,
+`on_exit`, and `once`. Trigger overlap is player-capsule versus AABB and tracks
+enter/stay/exit across fixed ticks; one-shot completion persists.
+
+Pickup (`gameplay_type = pickup`):
+
+```text
+pickup_type   key | health | armor
+item_id       required for a key, e.g. blue_key
+amount        positive integer for health or armor
+display_name  HUD text
+trigger_size  overlap box
+```
+
+Pickups collect on overlap. Health/armor pickups remain when that vital is
+already full. Keys are named strings and are not consumed when unlocking.
+Collected pickups become inactive and remain absent after save/load.
+
+Damage volume (`gameplay_type = damage_volume`): `trigger_size`,
+`damage_per_second`, and `bypass_armor`. Damage uses a fractional accumulator at
+the 120 Hz simulation rate. Armor absorbs 50 percent of eligible integer damage
+until depleted. Health and armor default to 100/0 and clamp to 100.
+
+Checkpoint (`gameplay_type = checkpoint`): `trigger_size`, `restore_health`, and
+`restore_armor`. On first entry it records the current capsule-bottom position
+and yaw. The authored `player_spawn` is the fallback checkpoint. Death disables
+movement for two seconds, then restores checkpoint vitals, clears controller
+velocity/transients, recovers overlap, and resumes without reloading the GLB.
+
+### Gameplay update and persistence
+
+At each 120 Hz tick Reflex Engine updates player movement, door motion and
+dynamic colliders, trigger/pickup/hazard/checkpoint overlaps, then processes the
+bounded FIFO event queue. Delayed events use simulation delivery time plus a
+monotonic sequence number. A maximum of 256 immediate events is processed per
+tick, preventing recursive event storms.
+
+F5 writes one human-readable slot at `saves/quicksave.json`. Format version 1
+stores the level path, player transform/view, vitals, key inventory, checkpoint,
+and persistent state keyed by authored entity name. F9 parses and validates a
+temporary save first, rejects future versions and other levels, resets authored
+state, applies known entities, ignores state for removed entities, restores the
+player, and clears pending events. If overlap recovery fails, the previous live
+state is restored. F6 performs the same authored reset without reparsing the
+GLB.
+
+The screen-space HUD uses a built-in code-defined 5x7 bitmap alphabet (no
+external font asset). Bottom-left shows health, armor, and keys; the center ray
+shows an interaction prompt; priority-aware temporary messages appear at the
+top. F4 draws gameplay bounds and reports the targeted entity, entity/event
+counts, and current FPS/noclip mode.
+
+See [the Phase 4 manual test matrix](docs/phase4-test-matrix.md) for the complete
+interaction, door, key, pickup, death, checkpoint, and persistence scenarios.
 
 ## Player and collision design
 
@@ -228,10 +342,11 @@ runtime checks.
   documented fallback `(0, 1, 5)`
 - safe fallback to noclip when a scene contains no collision triangles
 
-Known limitations are static collision only, five-sphere capsule approximation,
-no moving platforms/doors, dynamic bodies, crouching, ladders, swimming,
-elevators, triggers, arbitrary capsule orientation, network prediction, or exact
-Quake movement. Collision does not currently distinguish material/surface types.
+Known limitations are static triangle collision plus direct-iteration dynamic
+AABBs for doors, a five-sphere capsule approximation, and no moving platforms,
+dynamic bodies, crouching, ladders, swimming, elevators, arbitrary capsule
+orientation, network prediction, or exact Quake movement. Collision does not
+currently distinguish material/surface types.
 
 ## Supported glTF features
 
@@ -358,6 +473,59 @@ The application simulates at 120 Hz. Do not call the controller from the render
 path or change speed by render delta. If a local modification causes drift,
 compare fixed-duration travel with VSync on/off and run `collision_math` through
 CTest.
+
+### Custom properties or gameplay entities are missing
+
+Enable **Custom Properties** in Blender's glTF export options and use the exact
+lowercase `gameplay_type` values documented above. Startup prints the parsed
+entity count and warns about unknown types, missing required pickup data,
+invalid dimensions/door axes, duplicate names, and unresolved switch/trigger
+targets. One bad optional entity does not reject the visual level.
+
+### Door visual/collision mismatch or player passes through a door
+
+Give the door a positive full-extents `collider_size`, apply transforms, and
+keep it as one gameplay node. F4 shows the runtime AABB. Door meshes are removed
+from static collision automatically; adding `collision = true` does not replace
+the dynamic box. Very thin boxes should still have a sensible thickness such as
+0.2 m. Rotating doors are not supported.
+
+### Interaction works through a wall or no prompt appears
+
+Interaction range is 2.75 m from the camera. Ensure the entity has a correctly
+sized box around its visible object. Static triangles and other dynamic doors
+occlude the ray. Use F4 to compare the target box with the center crosshair; a
+wall excluded from collision cannot occlude interaction.
+
+### Trigger repeats, pickup does not collect, or key is not recognized
+
+Triggers fire enter only on the outside-to-inside transition; use `once = true`
+for persistent one-shot behavior. Check `trigger_size` uses full extents and
+encloses the player's capsule. Health/armor pickups deliberately remain at the
+maximum vital. A locked door's `required_key` must exactly match the key
+pickup's case-sensitive `item_id`.
+
+### Save file fails to load
+
+Read the console diagnostic. F9 rejects malformed JSON, any `format_version`
+other than 1, non-finite/invalid player fields, and saves whose recorded level
+path differs from the current level. Delete `saves/quicksave.json` to start a
+fresh slot. Unknown saved entity names are harmless and ignored.
+
+### Respawn is embedded or HUD text is absent
+
+Place checkpoints in capsule-clear space and make their trigger high enough to
+overlap the player. Respawn uses bounded penetration recovery and falls back to
+`player_spawn` when needed. For HUD failures, confirm `hud.vert` and `hud.frag`
+were copied with the other runtime shaders and inspect shader compilation logs.
+
+### Gameplay differs with render rate or Wayland mouse capture fails
+
+Gameplay, doors, damage, and trigger transitions run only on the 120 Hz fixed
+simulation. Presentation-time HUD message fading does not affect state. If
+relative mode is denied under a compositor, try an X11 session or ensure the
+Wayland pointer-constraints protocols are available; the SDL warning is
+nonfatal and Escape still releases a successful capture.
 
 ### Mouse capture under Wayland
 
