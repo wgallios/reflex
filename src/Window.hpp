@@ -4,6 +4,8 @@
 
 #include <memory>
 
+class InputState;
+
 class Window {
 public:
     Window() = default;
@@ -17,10 +19,11 @@ public:
     [[nodiscard]] bool initialize(const char* title, int width, int height);
     void shutdown() noexcept;
 
-    [[nodiscard]] bool processEvents();
+    [[nodiscard]] bool processEvents(InputState& input);
     void swapBuffers() const;
 
     [[nodiscard]] bool takeFramebufferResize(int& width, int& height) noexcept;
+    [[nodiscard]] bool isMouseCaptured() const noexcept;
 
 private:
     struct SdlWindowDeleter {
@@ -43,6 +46,7 @@ private:
     };
 
     [[nodiscard]] bool setGlAttribute(SDL_GLAttr attribute, int value) const;
+    void setMouseCaptured(bool captured);
     void refreshFramebufferSize();
 
     std::unique_ptr<SDL_Window, SdlWindowDeleter> window_;
@@ -50,4 +54,5 @@ private:
     int framebufferWidth_{0};
     int framebufferHeight_{0};
     bool framebufferResized_{false};
+    bool mouseCaptured_{false};
 };

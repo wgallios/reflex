@@ -1,5 +1,7 @@
 #include "Window.hpp"
 
+#include "input/InputState.hpp"
+
 #include <iostream>
 
 Window::~Window() {
@@ -50,17 +52,35 @@ void Window::shutdown() noexcept {
     framebufferWidth_ = 0;
     framebufferHeight_ = 0;
     framebufferResized_ = false;
+    mouseCaptured_ = false;
 }
 
-bool Window::processEvents() {
+bool Window::processEvents(InputState& input) {
+    input.beginFrame();
     SDL_Event event{};
     while (SDL_PollEvent(&event)) {
         if (event.type == SDL_EVENT_QUIT) {
             return false;
         }
 
-        if (event.type == SDL_EVENT_KEY_DOWN && event.key.key == SDLK_ESCAPE) {
+        if (event.type == SDL_EVENT_KEY_DOWN && event.key.key == SDLK_ESCAPE &&
+            !event.key.repeat) {
+            if (mouseCaptured_) {
+                setMouseCaptured(false);
+                input.clear();
+                continue;
+            }
             return false;
+        }
+
+        if (event.type == SDL_EVENT_MOUSE_BUTTON_DOWN &&
+            event.button.button == SDL_BUTTON_LEFT && !mouseCaptured_) {
+            setMouseCaptured(true);
+        }
+
+        if (event.type == SDL_EVENT_WINDOW_FOCUS_LOST) {
+            setMouseCaptured(false);
+            input.clear();
         }
 
         if (event.type == SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED ||
@@ -68,9 +88,15 @@ bool Window::processEvents() {
             refreshFramebufferSize();
             framebufferResized_ = true;
         }
+
+        input.handleEvent(event);
     }
 
     return true;
+}
+
+bool Window::isMouseCaptured() const noexcept {
+    return mouseCaptured_;
 }
 
 void Window::swapBuffers() const {
@@ -97,6 +123,18 @@ bool Window::setGlAttribute(const SDL_GLAttr attribute, const int value) const {
 
     std::cerr << "Failed to set an SDL OpenGL context attribute: " << SDL_GetError() << '\n';
     return false;
+}
+
+void Window::setMouseCaptured(const bool captured) {
+    if (!window_ || mouseCaptured_ == captured) {
+        return;
+    }
+    if (!SDL_SetWindowRelativeMouseMode(window_.get(), captured)) {
+        std::cerr << "Warning: unable to " << (captured ? "capture" : "release")
+                  << " the mouse: " << SDL_GetError() << '\n';
+        return;
+    }
+    mouseCaptured_ = captured;
 }
 
 void Window::refreshFramebufferSize() {

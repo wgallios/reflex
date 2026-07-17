@@ -22,7 +22,7 @@ Application::~Application() {
     shutdown();
 }
 
-bool Application::initialize() {
+bool Application::initialize(const std::filesystem::path& scenePath) {
     if (!SDL_Init(SDL_INIT_VIDEO)) {
         std::cerr << "Failed to initialize SDL video: " << SDL_GetError() << '\n';
         return false;
@@ -30,7 +30,7 @@ bool Application::initialize() {
     sdlInitialized_ = true;
     std::cout << "SDL video initialized successfully.\n";
 
-    if (!window_.initialize("Reflex Engine - Phase 1", initialWindowWidth,
+    if (!window_.initialize("Reflex Engine - Phase 2", initialWindowWidth,
                             initialWindowHeight)) {
         return false;
     }
@@ -52,8 +52,17 @@ bool Application::initialize() {
               << "OpenGL renderer: " << glString(GL_RENDERER) << '\n'
               << "OpenGL version:  " << glString(GL_VERSION) << '\n';
 
-    glEnable(GL_DEPTH_TEST);
-    glDepthFunc(GL_LESS);
+    const std::filesystem::path shaderDirectory = resolveAssetPath("assets/shaders");
+    if (!renderer_.initialize(shaderDirectory)) {
+        std::cerr << "Failed to initialize the static scene renderer.\n";
+        return false;
+    }
+
+    const std::filesystem::path resolvedScenePath = resolveAssetPath(scenePath);
+    if (!gltfLoader_.loadGlb(resolvedScenePath, scene_)) {
+        std::cerr << "Scene initialization failed; Reflex Engine will exit.\n";
+        return false;
+    }
 
     initialized_ = true;
     return true;
@@ -68,7 +77,7 @@ void Application::run() {
     auto previousFrameTime = Clock::now();
 
     while (true) {
-        if (!window_.processEvents()) {
+        if (!window_.processEvents(input_)) {
             break;
         }
 
@@ -87,6 +96,8 @@ void Application::run() {
 
 void Application::shutdown() noexcept {
     initialized_ = false;
+    renderer_ = Renderer{};
+    scene_ = Scene{};
     window_.shutdown();
 
     if (sdlInitialized_) {
@@ -95,7 +106,8 @@ void Application::shutdown() noexcept {
     }
 }
 
-void Application::update([[maybe_unused]] const float deltaTimeSeconds) {
+void Application::update(const float deltaTimeSeconds) {
+    camera_.update(input_, deltaTimeSeconds, window_.isMouseCaptured());
 }
 
 void Application::render() {
@@ -103,9 +115,31 @@ void Application::render() {
     int framebufferHeight = 0;
     if (window_.takeFramebufferResize(framebufferWidth, framebufferHeight)) {
         glViewport(0, 0, framebufferWidth, framebufferHeight);
+        if (framebufferHeight > 0) {
+            camera_.setAspectRatio(static_cast<float>(framebufferWidth) /
+                                   static_cast<float>(framebufferHeight));
+        }
     }
 
     constexpr glm::vec4 clearColor{0.055F, 0.075F, 0.11F, 1.0F};
     glClearColor(clearColor.r, clearColor.g, clearColor.b, clearColor.a);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+    renderer_.render(scene_, camera_);
+}
+
+std::filesystem::path Application::resolveAssetPath(
+    const std::filesystem::path& path) const {
+    if (std::filesystem::exists(path)) {
+        return path;
+    }
+
+    const char* basePath = SDL_GetBasePath();
+    if (basePath != nullptr) {
+        const std::filesystem::path besideExecutable =
+            std::filesystem::path{basePath} / path;
+        if (std::filesystem::exists(besideExecutable)) {
+            return besideExecutable;
+        }
+    }
+    return path;
 }

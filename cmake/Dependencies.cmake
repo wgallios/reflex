@@ -34,7 +34,27 @@ FetchContent_Declare(
     GIT_PROGRESS TRUE
 )
 
-FetchContent_MakeAvailable(SDL3 glad glm)
+FetchContent_Declare(
+    tinygltf
+    GIT_REPOSITORY https://github.com/syoyo/tinygltf.git
+    GIT_TAG v2.9.7
+    GIT_SHALLOW TRUE
+    GIT_PROGRESS TRUE
+)
+
+set(TINYGLTF_BUILD_LOADER_EXAMPLE OFF CACHE BOOL "Do not build tinygltf examples" FORCE)
+set(TINYGLTF_HEADER_ONLY ON CACHE BOOL "Use tinygltf from one engine translation unit" FORCE)
+set(TINYGLTF_INSTALL OFF CACHE BOOL "Do not install the fetched tinygltf dependency" FORCE)
+
+FetchContent_Declare(
+    stb
+    GIT_REPOSITORY https://github.com/nothings/stb.git
+    GIT_TAG 31c1ad37456438565541f4919958214b6e762fb4
+    GIT_SHALLOW TRUE
+    GIT_PROGRESS TRUE
+)
+
+FetchContent_MakeAvailable(SDL3 glad glm tinygltf stb)
 
 # Generate only the OpenGL API this phase uses. REPRODUCIBLE makes GLAD use its
 # bundled Khronos specification snapshot instead of downloading one at configure time.
