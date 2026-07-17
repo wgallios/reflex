@@ -687,6 +687,14 @@ requires OpenGL 3.3 Core and exits nonzero if GLAD cannot load it. `glxinfo -B`
 or `eglinfo` can show the driver version. A remote/headless shell also needs a
 working `DISPLAY` or `WAYLAND_DISPLAY`.
 
+## License
+
+Reflex Game Engine is licensed under the MIT License. Commercial and private
+use, modification, and redistribution are permitted, and closed-source games
+and applications may use Reflex. The copyright notice and license notice must
+be preserved as required by the license. Consult the root `LICENSE` file for
+the complete terms.
+
 ## Recommended Phase 6
 
 A sensible Phase 6 is focused presentation and encounter authoring: a small audio
