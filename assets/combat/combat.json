@@ -1,0 +1,81 @@
+{
+  "maximum_ammo": {
+    "bullets": 180,
+    "shells": 48,
+    "rockets": 24
+  },
+  "weapons": [
+    {
+      "id": "pistol",
+      "display_name": "9MM PISTOL",
+      "attack_type": "hitscan",
+      "damage": 18.0,
+      "range": 120.0,
+      "shots_per_second": 4.0,
+      "ammo_type": "bullets",
+      "magazine_size": 12,
+      "reload_time": 1.4,
+      "equip_time": 0.2,
+      "spread_degrees": 0.8,
+      "pellets": 1,
+      "automatic": false,
+      "tracer_frequency": 1
+    },
+    {
+      "id": "shotgun",
+      "display_name": "12GA SHOTGUN",
+      "attack_type": "hitscan",
+      "damage": 10.0,
+      "range": 45.0,
+      "shots_per_second": 1.0,
+      "ammo_type": "shells",
+      "magazine_size": 6,
+      "reload_time": 1.8,
+      "equip_time": 0.3,
+      "spread_degrees": 6.5,
+      "pellets": 8,
+      "automatic": false,
+      "tracer_frequency": 8
+    },
+    {
+      "id": "plasma_launcher",
+      "display_name": "PLASMA LAUNCHER",
+      "attack_type": "projectile",
+      "damage": 45.0,
+      "range": 100.0,
+      "shots_per_second": 1.25,
+      "ammo_type": "rockets",
+      "magazine_size": 4,
+      "reload_time": 2.0,
+      "equip_time": 0.35,
+      "spread_degrees": 0.2,
+      "pellets": 1,
+      "automatic": false,
+      "projectile_speed": 22.0,
+      "projectile_radius": 0.14,
+      "projectile_lifetime": 6.0,
+      "splash_damage": 55.0,
+      "splash_radius": 4.0,
+      "self_damage": true
+    }
+  ],
+  "enemies": [
+    {
+      "id": "grunt",
+      "display_name": "GRUNT",
+      "maximum_health": 75,
+      "movement_speed": 2.5,
+      "sight_distance": 25.0,
+      "field_of_view_degrees": 100.0,
+      "reaction_time": 0.25,
+      "lost_sight_duration": 2.0,
+      "attack_damage": 8.0,
+      "attack_range": 18.0,
+      "shots_per_second": 1.5,
+      "attack_spread_degrees": 4.0,
+      "pain_duration": 0.2,
+      "radius": 0.4,
+      "height": 1.8
+    }
+  ]
+}

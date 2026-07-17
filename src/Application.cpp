@@ -35,7 +35,7 @@ bool Application::initialize(const std::filesystem::path& scenePath) {
     sdlInitialized_ = true;
     std::cout << "SDL video initialized successfully.\n";
 
-    if (!window_.initialize("Reflex Engine - Phase 4", initialWindowWidth,
+    if (!window_.initialize("Reflex Engine - Phase 5", initialWindowWidth,
                             initialWindowHeight)) {
         return false;
     }
@@ -83,6 +83,11 @@ bool Application::initialize(const std::filesystem::path& scenePath) {
         std::cerr << "Failed to initialize the gameplay world.\n";
         return false;
     }
+    if (!combat_.initialize(resolveAssetPath("assets/combat/combat.json"), scene_, gameplay_,
+                            scene_.collisionWorld, dynamicCollision_)) {
+        std::cerr << "Failed to initialize combat systems.\n";
+        return false;
+    }
     camera_.setYawDegrees(scene_.playerSpawnYawDegrees);
     if (!player_.initialize(scene_.collisionWorld, scene_.playerSpawnPosition, {},
                             &dynamicCollision_)) {
@@ -126,6 +131,7 @@ void Application::shutdown() noexcept {
     renderer_ = Renderer{};
     debugDraw_ = DebugDraw{};
     hudRenderer_ = HudRenderer{};
+    combat_ = CombatSystem{};
     gameplay_ = GameplayWorld{};
     dynamicCollision_.clear();
     scene_ = Scene{};
@@ -152,16 +158,28 @@ void Application::update(const float deltaTimeSeconds) {
         std::cout << "Gameplay diagnostics: "
                   << (gameplayDiagnosticsVisible_ ? "on" : "off") << '\n';
     }
+    if (input_.wasPressed(SDL_SCANCODE_F7)) {
+        combatDiagnosticsVisible_ = !combatDiagnosticsVisible_;
+        std::cout << "Combat diagnostics: " << (combatDiagnosticsVisible_ ? "on" : "off") << '\n';
+    }
     if (input_.wasPressed(SDL_SCANCODE_F5)) quickSave();
     if (input_.wasPressed(SDL_SCANCODE_F9)) quickLoad();
     if (input_.wasPressed(SDL_SCANCODE_F6)) resetLevel();
     pendingJump_ = pendingJump_ ||
         (gameplay_.vitals().alive && input_.wasPressed(SDL_SCANCODE_SPACE));
+    pendingFire_ = pendingFire_ ||
+        (window_.isMouseCaptured() && input_.mouseButtonPressed(SDL_BUTTON_LEFT));
+    pendingReload_ = pendingReload_ || input_.wasPressed(SDL_SCANCODE_R);
+    if (input_.wasPressed(SDL_SCANCODE_1)) pendingWeaponSlot_ = 0;
+    if (input_.wasPressed(SDL_SCANCODE_2)) pendingWeaponSlot_ = 1;
+    if (input_.wasPressed(SDL_SCANCODE_3)) pendingWeaponSlot_ = 2;
+    if (input_.mouseWheelY() != 0.0F) pendingWeaponCycle_ = input_.mouseWheelY() > 0.0F ? -1 : 1;
     player_.beginDiagnosticsFrame();
     simulationAccumulator_ = std::min(simulationAccumulator_ + deltaTimeSeconds,
                                       maximumAccumulatedTimeSeconds);
 
     bool consumedJump = false;
+    bool consumedCombatEdges = false;
     while (simulationAccumulator_ >= fixedDeltaTimeSeconds) {
         PlayerInput playerInput;
         if (gameplay_.vitals().alive) {
@@ -180,6 +198,17 @@ void Application::update(const float deltaTimeSeconds) {
         }
         gameplay_.fixedUpdate(static_cast<float>(fixedDeltaTimeSeconds), player_.capsule(),
                               player_.position(), camera_.yawDegrees());
+        CombatInput combatInput;
+        combatInput.firePressed = pendingFire_ && !consumedCombatEdges;
+        combatInput.fireHeld = window_.isMouseCaptured() &&
+            input_.mouseButtonDown(SDL_BUTTON_LEFT);
+        combatInput.reloadPressed = pendingReload_ && !consumedCombatEdges;
+        combatInput.selectSlot = !consumedCombatEdges ? pendingWeaponSlot_ : -1;
+        combatInput.cycleDirection = !consumedCombatEdges ? pendingWeaponCycle_ : 0;
+        combat_.fixedUpdate(static_cast<float>(fixedDeltaTimeSeconds), combatInput,
+                            camera_.position(), camera_.forward(), player_.capsule(),
+                            player_.position());
+        consumedCombatEdges = true;
         if (!gameplay_.vitals().alive) {
             deathTimer_ += static_cast<float>(fixedDeltaTimeSeconds);
             if (deathTimer_ >= 2.0F) respawnPlayer();
@@ -190,8 +219,15 @@ void Application::update(const float deltaTimeSeconds) {
     if (consumedJump) {
         pendingJump_ = false;
     }
+    if (consumedCombatEdges) {
+        pendingFire_ = false;
+        pendingReload_ = false;
+        pendingWeaponSlot_ = -1;
+        pendingWeaponCycle_ = 0;
+    }
     camera_.setPosition(player_.cameraPosition());
     gameplay_.updatePresentation(deltaTimeSeconds);
+    combat_.updatePresentation(deltaTimeSeconds);
     gameplay_.updateInteraction(camera_.position(), camera_.forward(), scene_.collisionWorld);
     if (input_.wasPressed(SDL_SCANCODE_E) && gameplay_.vitals().alive) gameplay_.interact();
 
@@ -233,7 +269,8 @@ void Application::render() {
     glClearColor(clearColor.r, clearColor.g, clearColor.b, clearColor.a);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
     renderer_.render(scene_, camera_);
-    if (collisionDiagnosticsVisible_ || gameplayDiagnosticsVisible_) debugDraw_.clear();
+    if (collisionDiagnosticsVisible_ || gameplayDiagnosticsVisible_ || combatDiagnosticsVisible_ ||
+        !combat_.effects().empty() || !combat_.projectiles().empty()) debugDraw_.clear();
     if (collisionDiagnosticsVisible_) {
         debugDraw_.capsule(player_.capsule(), player_.isGrounded()
             ? glm::vec3{0.2F, 1.0F, 0.25F} : glm::vec3{1.0F, 0.75F, 0.15F});
@@ -260,10 +297,33 @@ void Application::render() {
                                : glm::vec3{0.2F, 0.8F, 1.0F});
         }
     }
-    if (collisionDiagnosticsVisible_ || gameplayDiagnosticsVisible_) debugDraw_.render(camera_);
+    for (const CombatLineEffect& effect : combat_.effects()) {
+        debugDraw_.line(effect.from, effect.to, effect.color);
+    }
+    for (const Projectile& projectile : combat_.projectiles()) {
+        debugDraw_.circle(projectile.position, projectile.radius, 0, {0.2F, 0.8F, 1.0F}, 12);
+        debugDraw_.circle(projectile.position, projectile.radius, 1, {0.2F, 0.8F, 1.0F}, 12);
+    }
+    if (combatDiagnosticsVisible_) {
+        for (const EnemyActor& enemy : combat_.enemies()) {
+            const EnemyDefinition* definition = nullptr;
+            static_cast<void>(definition);
+            const glm::vec3 half{0.4F, 0.9F, 0.4F};
+            debugDraw_.box({enemy.position - glm::vec3{half.x, 0.0F, half.z},
+                            enemy.position + glm::vec3{half.x, half.y * 2.0F, half.z}},
+                           enemy.state == EnemyState::Dead ? glm::vec3{0.3F} : glm::vec3{1.0F,0.1F,0.1F});
+            debugDraw_.line(enemy.position + glm::vec3{0,1.5F,0},
+                            enemy.position + glm::vec3{0,1.5F,0} + enemy.forward * 2.0F,
+                            {1.0F,0.5F,0.1F});
+        }
+    }
+    if (collisionDiagnosticsVisible_ || gameplayDiagnosticsVisible_ || combatDiagnosticsVisible_ ||
+        !combat_.effects().empty() || !combat_.projectiles().empty()) debugDraw_.render(camera_);
 
     hudRenderer_.begin(framebufferWidth_, framebufferHeight_);
-    hudRenderer_.crosshair();
+    const glm::vec3 crosshairColor = combat_.killMarkerVisible() ? glm::vec3{1.0F,0.2F,0.1F} :
+        (combat_.hitMarkerVisible() ? glm::vec3{1.0F,0.85F,0.1F} : glm::vec3{1.0F});
+    if (gameplay_.vitals().alive) hudRenderer_.crosshair(crosshairColor);
     const PlayerVitals& vitals = gameplay_.vitals();
     hudRenderer_.text(18.0F, static_cast<float>(framebufferHeight_) - 48.0F, 3.0F,
         "HEALTH " + std::to_string(vitals.health) + "  ARMOR " + std::to_string(vitals.armor));
@@ -288,13 +348,46 @@ void Application::render() {
         const std::string description = gameplay_.debugDescription(gameplay_.interactionTarget());
         if (!description.empty()) hudRenderer_.text(18.0F, 38.0F, 2.0F, description);
     }
+    if (const WeaponInstance* weapon = combat_.equippedWeapon()) {
+        const WeaponDefinition* definition = combat_.equippedDefinition();
+        const std::string label = (definition ? definition->displayName : weapon->definitionId) +
+            "  " + std::to_string(weapon->magazine) + " / " + std::to_string(combat_.reserveAmmo());
+        hudRenderer_.text(static_cast<float>(framebufferWidth_) -
+            static_cast<float>(label.size()) * 18.0F - 18.0F,
+            static_cast<float>(framebufferHeight_) - 48.0F, 3.0F, label,
+            weapon->state == WeaponState::Reloading ? glm::vec3{1.0F,0.75F,0.2F} : glm::vec3{1.0F});
+        if (gameplay_.vitals().alive) {
+            hudRenderer_.weaponPlaceholder(combat_.muzzleFlashRemaining() > 0.0F ? 1.0F : 0.0F,
+                                            weapon->state == WeaponState::Reloading,
+                                            combat_.muzzleFlashRemaining() > 0.0F);
+        }
+    }
+    if (combat_.damageIndicatorRemaining() > 0.0F) {
+        const glm::vec3 sourceDirection = combat_.lastDamageDirection() - player_.position();
+        const float side = glm::dot(sourceDirection, camera_.right());
+        const float front = glm::dot(sourceDirection, camera_.forward());
+        const std::string direction = std::abs(side) > std::abs(front)
+            ? (side > 0.0F ? "DAMAGE RIGHT" : "DAMAGE LEFT")
+            : (front > 0.0F ? "DAMAGE FRONT" : "DAMAGE REAR");
+        hudRenderer_.centeredText(static_cast<float>(framebufferHeight_) * 0.18F, 3.0F,
+                                  direction, {1.0F,0.15F,0.1F});
+    }
+    if (combatDiagnosticsVisible_) {
+        hudRenderer_.text(18.0F, 58.0F, 2.0F, combat_.debugSummary(), {1.0F,0.45F,0.2F});
+        float y = 78.0F;
+        for (const EnemyActor& enemy : combat_.enemies()) {
+            hudRenderer_.text(18.0F, y, 2.0F, enemy.name + " " + enemyStateName(enemy.state) +
+                              " HP " + std::to_string(enemy.health));
+            y += 18.0F;
+        }
+    }
     hudRenderer_.render();
 }
 
 void Application::quickSave() {
     std::string error;
     const SaveGameData data = SaveGame::capture(scenePath_.string(), gameplay_,
-        player_.position(), camera_.yawDegrees(), camera_.pitchDegrees());
+        player_.position(), camera_.yawDegrees(), camera_.pitchDegrees(), &combat_);
     if (SaveGame::write("saves/quicksave.json", data, error)) {
         std::cout << "Quick save written to saves/quicksave.json\n";
         gameplay_.showMessage("Game saved", 2.0F, 3);
@@ -318,11 +411,11 @@ void Application::quickLoad() {
         return;
     }
     const SaveGameData backup = SaveGame::capture(scenePath_.string(), gameplay_,
-        player_.position(), camera_.yawDegrees(), camera_.pitchDegrees());
-    if (!SaveGame::apply(*data, gameplay_, error) ||
+        player_.position(), camera_.yawDegrees(), camera_.pitchDegrees(), &combat_);
+    if (!SaveGame::apply(*data, gameplay_, error, &combat_) ||
         !player_.setPosition(data->playerPosition, true)) {
         std::string restoreError;
-        static_cast<void>(SaveGame::apply(backup, gameplay_, restoreError));
+        static_cast<void>(SaveGame::apply(backup, gameplay_, restoreError, &combat_));
         static_cast<void>(player_.setPosition(backup.playerPosition, true));
         std::cerr << "Quick load failed: "
                   << (error.empty() ? "invalid player position" : error) << '\n';
@@ -338,6 +431,7 @@ void Application::quickLoad() {
 
 void Application::resetLevel() {
     gameplay_.reset();
+    combat_.reset();
     static_cast<void>(player_.setPosition(scene_.playerSpawnPosition, true));
     camera_.setYawDegrees(scene_.playerSpawnYawDegrees);
     camera_.setPitchDegrees(0.0F);

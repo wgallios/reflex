@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate Reflex Engine's dependency-free Phase 4 collision/gameplay test GLB."""
+"""Generate Reflex Engine's dependency-free Phase 5 combat test GLB."""
 
 import json
 import pathlib
@@ -200,10 +200,37 @@ box("switch_one_shot", [4.0, 1.0, -2.0], [0.3, 0.3, 0.15], extras={
     "gameplay_type": "switch", "target_name": "door_direct", "event": "open",
     "one_shot": True, "collider_size": [0.8, 0.8, 0.5]})
 
+# Phase 5 pickups and static placeholder enemy visuals. Runtime combat controls
+# enemy transforms and visibility; all metadata remains Blender-compatible extras.
+box("pickup_shotgun", [-1.5, 0.35, 7.0], [0.35, 0.2, 0.6], extras={
+    "gameplay_type": "pickup", "pickup_type": "weapon", "weapon_id": "shotgun",
+    "ammo_grant": 12, "display_name": "Shotgun", "trigger_size": [1.0, 0.8, 1.0]})
+box("pickup_plasma_launcher", [1.5, 0.35, 7.0], [0.35, 0.2, 0.6], extras={
+    "gameplay_type": "pickup", "pickup_type": "weapon", "weapon_id": "plasma_launcher",
+    "ammo_grant": 8, "display_name": "Plasma Launcher", "trigger_size": [1.0, 0.8, 1.0]})
+box("pickup_bullets_small", [-3.0, 0.25, 6.5], [0.25, 0.25, 0.25], extras={
+    "gameplay_type": "pickup", "pickup_type": "ammo", "ammo_type": "bullets",
+    "amount": 24, "display_name": "Bullets", "trigger_size": [0.8, 0.8, 0.8]})
+box("pickup_shells_small", [0.0, 0.25, 6.5], [0.25, 0.25, 0.25], extras={
+    "gameplay_type": "pickup", "pickup_type": "ammo", "ammo_type": "shells",
+    "amount": 8, "display_name": "Shells", "trigger_size": [0.8, 0.8, 0.8]})
+box("pickup_rockets_small", [3.0, 0.25, 6.5], [0.25, 0.25, 0.25], extras={
+    "gameplay_type": "pickup", "pickup_type": "ammo", "ammo_type": "rockets",
+    "amount": 6, "display_name": "Plasma Cells", "trigger_size": [0.8, 0.8, 0.8]})
+box("enemy_grunt_01", [-5.0, 0.9, -3.0], [0.4, 0.9, 0.4], extras={
+    "gameplay_type": "enemy_spawn", "enemy_type": "grunt", "starts_active": True,
+    "collider_size": [0.8, 1.8, 0.8]})
+box("enemy_grunt_02", [5.0, 0.9, -3.0], [0.4, 0.9, 0.4], extras={
+    "gameplay_type": "enemy_spawn", "enemy_type": "grunt", "starts_active": True,
+    "collider_size": [0.8, 1.8, 0.8]})
+box("enemy_grunt_platform", [0.0, 3.1, -8.0], [0.4, 0.9, 0.4], extras={
+    "gameplay_type": "enemy_spawn", "enemy_type": "grunt", "starts_active": True,
+    "collider_size": [0.8, 1.8, 0.8]})
+
 document = {
     "asset": {"version": "2.0", "generator": "Reflex Engine test scene generator"},
     "scene": 0,
-    "scenes": [{"name": "Phase 4 Interaction Course", "nodes": list(range(len(nodes)))}],
+    "scenes": [{"name": "Phase 5 Combat Course", "nodes": list(range(len(nodes)))}],
     "nodes": nodes,
     "meshes": [
         {"name": "Floor", "primitives": [{"attributes": {"POSITION": 0, "NORMAL": 1,

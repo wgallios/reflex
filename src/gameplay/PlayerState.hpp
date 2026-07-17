@@ -8,7 +8,8 @@
 #include <unordered_set>
 #include <vector>
 
-enum class DamageType { Generic, Environmental, Crushing };
+enum class DamageType { Generic, Bullet, Pellet, Explosive, Projectile, Melee,
+                        Environmental, Crushing };
 
 class PlayerInventory {
 public:
@@ -35,4 +36,3 @@ struct PlayerVitals {
     [[nodiscard]] bool addHealth(int amount) noexcept;
     [[nodiscard]] bool addArmor(int amount) noexcept;
 };
-

@@ -45,7 +45,7 @@ bool parseVector(const json& value, glm::vec3& output) {
 
 SaveGameData SaveGame::capture(const std::string& levelPath, const GameplayWorld& gameplay,
                                const glm::vec3& playerPosition, const float yaw,
-                               const float pitch) {
+                               const float pitch, const CombatSystem* combat) {
     SaveGameData data;
     data.levelPath = levelPath;
     data.playerPosition = playerPosition;
@@ -60,6 +60,7 @@ SaveGameData SaveGame::capture(const std::string& levelPath, const GameplayWorld
             entity.active, entity.completed, entity.collected, entity.activated,
             entity.locked, entity.doorState, entity.doorProgress});
     }
+    if (combat != nullptr) data.combat = combat->captureState();
     return data;
 }
 
@@ -82,6 +83,18 @@ bool SaveGame::write(const std::filesystem::path& path, const SaveGameData& data
             {"collected", state.collected}, {"activated", state.activated},
             {"locked", state.locked}, {"door_state", stateName(state.doorState)},
             {"door_progress", state.doorProgress}};
+    }
+    root["combat"] = json::object();
+    root["combat"]["equipped_weapon"] = data.combat.equippedWeapon;
+    root["combat"]["weapons"] = json::array();
+    for (const SavedWeaponState& weapon : data.combat.weapons) {
+        root["combat"]["weapons"].push_back({{"id", weapon.id}, {"magazine", weapon.magazine}});
+    }
+    root["combat"]["ammunition"] = data.combat.ammunition;
+    root["combat"]["enemies"] = json::array();
+    for (const SavedEnemyState& enemy : data.combat.enemies) {
+        root["combat"]["enemies"].push_back({{"name", enemy.name}, {"health", enemy.health},
+            {"position", vectorJson(enemy.position)}, {"active", enemy.active}});
     }
     std::error_code directoryError;
     const std::filesystem::path parent = path.parent_path();
@@ -160,16 +173,56 @@ std::optional<SaveGameData> SaveGame::read(const std::filesystem::path& path,
                 data.entities.emplace(name, state);
             }
         }
+        if (root.contains("combat")) {
+            const json& combat = root["combat"];
+            if (!combat.is_object()) { error = "save combat section is not an object"; return std::nullopt; }
+            data.combat.equippedWeapon = combat.value("equipped_weapon", std::string{});
+            if (combat.contains("weapons")) {
+                if (!combat["weapons"].is_array()) { error = "save weapons are invalid"; return std::nullopt; }
+                for (const json& weapon : combat["weapons"]) {
+                    if (!weapon.is_object() || !weapon.contains("id") || !weapon["id"].is_string() ||
+                        !weapon.contains("magazine") || !weapon["magazine"].is_number_integer()) {
+                        error = "save contains an invalid weapon"; return std::nullopt;
+                    }
+                    data.combat.weapons.push_back({weapon["id"].get<std::string>(),
+                                                   weapon["magazine"].get<int>()});
+                }
+            }
+            if (combat.contains("ammunition")) {
+                if (!combat["ammunition"].is_object()) { error = "save ammunition is invalid"; return std::nullopt; }
+                for (const auto& [name, value] : combat["ammunition"].items()) {
+                    if (!value.is_number_integer()) { error = "save ammunition count is invalid"; return std::nullopt; }
+                    data.combat.ammunition.emplace(name, value.get<int>());
+                }
+            }
+            if (combat.contains("enemies")) {
+                if (!combat["enemies"].is_array()) { error = "save enemies are invalid"; return std::nullopt; }
+                for (const json& enemy : combat["enemies"]) {
+                    SavedEnemyState saved;
+                    if (!enemy.is_object() || !enemy.contains("name") || !enemy["name"].is_string() ||
+                        !enemy.contains("health") || !enemy["health"].is_number_integer() ||
+                        !enemy.contains("position") || !parseVector(enemy["position"], saved.position)) {
+                        error = "save contains an invalid enemy"; return std::nullopt;
+                    }
+                    saved.name = enemy["name"].get<std::string>();
+                    saved.health = enemy["health"].get<int>();
+                    saved.active = enemy.value("active", true);
+                    data.combat.enemies.push_back(std::move(saved));
+                }
+            }
+        }
     } catch (const json::exception& exception) {
         error = std::string{"invalid save value: "} + exception.what(); return std::nullopt;
     }
     return data;
 }
 
-bool SaveGame::apply(const SaveGameData& data, GameplayWorld& gameplay, std::string& error) {
+bool SaveGame::apply(const SaveGameData& data, GameplayWorld& gameplay, std::string& error,
+                     CombatSystem* combat) {
     if (data.formatVersion != SaveGameData::currentFormatVersion) {
         error = "unsupported save format version"; return false;
     }
+    if (combat != nullptr && !combat->validateState(data.combat, error)) return false;
     gameplay.reset();
     gameplay.inventory().clear();
     for (const std::string& key : data.keys) static_cast<void>(gameplay.inventory().addKey(key));
@@ -189,5 +242,6 @@ bool SaveGame::apply(const SaveGameData& data, GameplayWorld& gameplay, std::str
     }
     gameplay.clearPendingEvents();
     gameplay.synchronizePersistentState();
+    if (combat != nullptr && !combat->restoreState(data.combat, error)) return false;
     return true;
 }

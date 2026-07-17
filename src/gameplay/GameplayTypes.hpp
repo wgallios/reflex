@@ -21,7 +21,8 @@ using EntityId = std::uint64_t;
     return hash == 0 ? 1 : hash;
 }
 
-enum class GameplayEntityType { Door, Switch, Trigger, Pickup, DamageVolume, Checkpoint };
+enum class GameplayEntityType { Door, Switch, Trigger, Pickup, DamageVolume, Checkpoint,
+                                EnemySpawn };
 enum class GameplayEventType {
     Activate, Deactivate, Toggle, Open, Close, Lock, Unlock,
     TriggerEnter, TriggerStay, TriggerExit, PickupCollected,
@@ -71,4 +72,6 @@ struct GameplayEntityDefinition {
     bool bypassArmor{false};
     int restoreHealth{100};
     int restoreArmor{0};
+    std::string enemyType;
+    bool startsActive{true};
 };

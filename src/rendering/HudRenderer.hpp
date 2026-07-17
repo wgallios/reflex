@@ -24,6 +24,7 @@ public:
     void centeredText(float y, float pixelSize, std::string_view value,
                       const glm::vec3& color = glm::vec3{1.0F});
     void crosshair(const glm::vec3& color = glm::vec3{1.0F});
+    void weaponPlaceholder(float recoil, bool reloading, bool muzzleFlash);
     void render();
 
 private:
@@ -38,4 +39,3 @@ private:
     int height_{1};
     std::vector<Vertex> vertices_;
 };
-

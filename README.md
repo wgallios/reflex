@@ -4,18 +4,20 @@ Reflex Engine is a small C++20, cross-platform 3D game engine for first-person
 shooters inspired by the 1999-2004 era. Linux is the first target; SDL and CMake
 keep the platform shell portable to Windows.
 
-## Phase 4 scope
+## Phase 5 scope
 
-Phase 4 adds a deliberately small, data-driven interactive-world layer to the
-existing renderer and kinematic FPS controller. Blender custom properties create
-stable gameplay entities for sliding doors, switches, triggers, key/health/armor
-pickups, hazards, and checkpoints. Interaction uses an occlusion-tested center
-ray. HUD feedback, death/respawn, and a versioned JSON quick-save slot complete
-the early-FPS environment loop.
+Phase 5 adds the first complete combat loop to the existing renderer, kinematic
+controller, and interactive-world layer. The player can carry and switch between
+a pistol, shotgun, and plasma launcher; collect named ammunition; reload; fire
+finite hitscan traces or swept projectiles; damage simple hostile grunts; take
+combat damage; die, respawn, and persist combat state in the quick-save slot.
+Deterministic spread, fixed-step timing, placeholder presentation, bounded line
+effects, hit feedback, and F7 diagnostics keep the prototype inspectable.
 
 This remains deliberately smaller than an ECS, scripting system, or general
-physics engine. Combat, weapons, enemies, AI, rigid bodies, moving platforms,
-level transitions, audio, scripting, and an editor are not included.
+physics engine. Navigation meshes, skeletal animation, ragdolls, advanced AI,
+audio playback, multiplayer, level transitions, scripting, and an editor are not
+included.
 
 ## Dependencies
 
@@ -100,9 +102,14 @@ Click the window to capture the pointer. While captured:
 - `N`: toggle collision-aware FPS movement and noclip
 - `F3`: toggle collision lines and rate-limited diagnostics
 - `E`: interact with the targeted door or switch
+- left mouse: fire the equipped weapon
+- `R`: reload the equipped weapon
+- `1` / `2` / `3`: select an owned weapon slot
+- mouse wheel: cycle owned weapons
 - `F4`: toggle gameplay bounds and entity inspection
 - `F5`: write `saves/quicksave.json`
 - `F6`: reset authored level/gameplay state
+- `F7`: toggle combat traces, projectiles, enemy bounds/state, and RNG diagnostics
 - `F9`: validate and load `saves/quicksave.json`
 - `Escape`: release the pointer
 
@@ -119,6 +126,8 @@ input so movement cannot become stuck.
 
 ```text
 assets/
+├── combat/
+│   └── combat.json
 ├── levels/
 │   └── test_scene.glb
 └── shaders/
@@ -132,8 +141,8 @@ The included test scene is original and generated locally. It contains a floor,
 enclosing walls, doorway, low ceiling, stairs, two ledge heights, walkable and
 steep ramps, corridor/corner tests, a fall platform, a spawn marker, and a
 visual-only object excluded through glTF extras, five sliding doors, switches,
-an automatic trigger door, a blue key, health/armor pickups, a damage floor,
-and two checkpoints. It retains embedded texture,
+an automatic trigger door, a blue key, health/armor and combat pickups, three
+grunt spawns, a damage floor, and two checkpoints. It retains embedded texture,
 interleaved-attribute, and 8-/16-bit index coverage. Regenerate it with:
 
 ```bash
@@ -261,7 +270,7 @@ bounded FIFO event queue. Delayed events use simulation delivery time plus a
 monotonic sequence number. A maximum of 256 immediate events is processed per
 tick, preventing recursive event storms.
 
-F5 writes one human-readable slot at `saves/quicksave.json`. Format version 1
+F5 writes one human-readable slot at `saves/quicksave.json`. Format version 2
 stores the level path, player transform/view, vitals, key inventory, checkpoint,
 and persistent state keyed by authored entity name. F9 parses and validates a
 temporary save first, rejects future versions and other levels, resets authored
@@ -278,6 +287,105 @@ counts, and current FPS/noclip mode.
 
 See [the Phase 4 manual test matrix](docs/phase4-test-matrix.md) for the complete
 interaction, door, key, pickup, death, checkpoint, and persistence scenarios.
+
+## Phase 5 combat
+
+Combat runs after player/gameplay updates at the existing fixed 120 Hz rate:
+weapon transitions and fire requests, hitscan/projectile resolution, queued
+damage, enemy perception/movement/attacks, pickup collection, then transient
+presentation updates. Rendering never controls fire rate, reload timing,
+projectile speed, enemy cooldowns, or damage.
+
+### Weapons and ammunition
+
+Reusable definitions live in `assets/combat/combat.json`. `maximum_ammo` maps
+arbitrary ammo IDs to carry limits. Every weapon requires `id`, `display_name`,
+`attack_type` (`hitscan` or `projectile`), positive `damage`, `shots_per_second`,
+`ammo_type`, `magazine_size`, and `reload_time`. Optional fields include `range`,
+`equip_time`, `spread_degrees`, `pellets`, `automatic`, `tracer_frequency`, and
+the projectile fields `projectile_speed`, `projectile_radius`,
+`projectile_lifetime`, `splash_damage`, `splash_radius`, and `self_damage`.
+Definitions are validated atomically; duplicate IDs, unknown ammo IDs, and
+non-positive required values fail combat initialization clearly.
+
+- Pistol: 12-round bullet magazine, 18 damage, low-spread 120 m hitscan.
+- Shotgun: six shells, eight 10-damage pellets, 6.5-degree spread, 45 m range.
+- Plasma launcher: four rounds, visible 22 m/s swept spheres, 45 direct damage,
+  and up to 55 splash damage over 4 m.
+
+Weapons receive a full magazine when first acquired. Extra `ammo_grant` goes to
+reserve; a duplicate weapon grants that reserve amount. Whole-magazine reloads
+transfer only missing rounds. Switching cancels reload by holstering the old
+instance. Save/load restores each magazine but normalizes weapons to `Ready` or
+`Empty`; active projectiles and presentation effects are not saved.
+
+Spread uses a dedicated seeded combat RNG and uniform disk sampling projected
+into a cone. Hitscan chooses the nearest static triangle, dynamic collider, or
+enemy AABB. Projectiles use a swept sphere against the static BVH and dynamic
+colliders, deactivate on the first impact, and expire after a finite lifetime.
+Splash damage falls off linearly to zero; static world and dynamic door geometry
+block it. Plasma self-damage is enabled, but rocket jumping is not tuned.
+
+The first-person weapon is an original code-generated screen-space placeholder.
+Valid shots produce a short muzzle flash and bounded line tracers; projectiles
+and explosions use bounded line presentation. Flesh hits and kills alter the
+crosshair. Surface-aligned line-cross marks distinguish stone, metal, and flesh
+impacts and share the bounded effect cap. There is no audio system, particle
+sprite system, or textured decal renderer; effects remain generated placeholders.
+
+### Enemies and Blender metadata
+
+`combat.json` defines the `grunt`: 75 health, 2.5 m/s direct pursuit, 25 m sight,
+a 100-degree horizontal field of view, 0.25-second reaction delay, and an
+inaccurate fixed-rate hitscan attack. Its explicit states are `Idle`, `Alert`,
+`Chasing`, `Attacking`, `Pain`, and `Dead`. Perception requires range, cone, and
+static/dynamic line of sight. Lost targets are pursued briefly. Movement uses a
+three-iteration upright-capsule slide against static geometry, doors, and enemy
+AABBs. It works in open rooms/corridors but cannot route through complex mazes.
+
+Create an Empty or placeholder mesh in Blender and export custom properties:
+
+```text
+gameplay_type = enemy_spawn
+entity_name = enemy_grunt_01
+enemy_type = grunt
+starts_active = true
+collider_size = [0.8, 1.8, 0.8]
+```
+
+The node transform supplies spawn position and initial facing. A placeholder
+mesh moves with the actor; a dead grunt is hidden and stops blocking.
+`starts_active = false` allows existing `Activate`/`Deactivate` events to control
+the encounter. Grunts have no skeletal animation, hearing, cover selection,
+squad behavior, or navmesh navigation.
+
+Combat pickups extend existing `gameplay_type = pickup` metadata:
+
+```text
+pickup_type = weapon   weapon_id = shotgun   ammo_grant = 8
+pickup_type = ammo     ammo_type = shells    amount = 8
+display_name = Shotgun Shells
+trigger_size = [0.8, 0.8, 0.8]
+```
+
+Weapon pickups grant ownership; duplicate weapons grant reserve ammo. Ammo
+pickups remain when the pool is full. Collection persists by authored entity
+name. Damage uses a bounded deterministic FIFO queue. Player armor retains the
+Phase 4 rule of absorbing 50 percent until depleted. Pain interrupts attacks;
+enemy death clamps at zero and occurs exactly once.
+
+The HUD adds weapon name, loaded/reserve ammo, reload color, the generated
+viewmodel, hit/kill feedback, and directional damage text. F7 shows traces,
+projectiles, enemy bounds/state/health, active counts, and RNG seed/sequence.
+
+Save format 2 adds owned weapons, equipped weapon, magazines, reserve ammo, and
+enemy name/health/position/active state. Loading validates known IDs, ammo and
+magazine bounds, finite positions, and authored enemy identities before mutation.
+Living enemies resume in stable `Idle`; active projectiles, cooldowns, recoil,
+effects, and mid-animation states are discarded.
+
+See [the Phase 5 manual test matrix](docs/phase5-test-matrix.md) for weapon,
+projectile, perception, AI, effects, pickup, persistence, and timing checks.
 
 ## Player and collision design
 
@@ -508,7 +616,7 @@ pickup's case-sensitive `item_id`.
 ### Save file fails to load
 
 Read the console diagnostic. F9 rejects malformed JSON, any `format_version`
-other than 1, non-finite/invalid player fields, and saves whose recorded level
+other than 2, non-finite/invalid player or combat fields, and saves whose recorded level
 path differs from the current level. Delete `saves/quicksave.json` to start a
 fresh slot. Unknown saved entity names are harmless and ignored.
 
@@ -540,6 +648,38 @@ Re-export using standard Blender glTF settings. Sparse accessors and unusual
 extension-compressed data are not supported. Index components must be unsigned
 8-, 16-, or 32-bit values; attributes must have the expected vector width.
 
+### Weapon will not fire, fires too quickly, or will not reload
+
+The window must be captured, the weapon must be `Ready`, and its magazine must
+contain ammunition. Semi-automatic weapons require a new press. Reload requires
+both magazine space and reserve ammunition. Use F7 to inspect state/timers and
+verify positive `shots_per_second`, `magazine_size`, and `reload_time` values in
+`combat.json`; all timing is fixed-step.
+
+### Hitscan, shotgun spread, projectile, or splash problems
+
+F7 draws traces and projectiles. Nearest static/dynamic/enemy hits win. A wall
+excluded from collision cannot block combat. Spread is deterministic uniform-disk
+cone sampling, so a small sample need not look symmetrical. Projectiles use swept
+spheres; very malformed triangles can still produce poor contacts. Static world
+and dynamic doors block splash LOS, and active projectiles are intentionally
+discarded by quick load.
+
+### Enemy cannot see, sees through walls, becomes stuck, or attacks too fast
+
+Confirm `enemy_type` exists, the spawn faces the intended direction, and
+`starts_active` is true or an Activate event was delivered. Sight needs range,
+horizontal FOV, and both static/dynamic LOS. F7 shows state and facing. Direct
+pursuit only slides locally, so complex corners or mazes require simpler room
+layout; no navmesh exists. Attack cadence uses `shots_per_second` at 120 Hz.
+
+### Enemy damage or combat effects are missing
+
+Check that the enemy box overlaps the visible placeholder and that no nearer wall
+or door blocks the trace. F7 shows actor health/state and the last traces. Muzzle,
+tracer, projectile, explosion, hit-marker, and viewmodel feedback are generated
+placeholders. There is no audio, textured particle, or persistent decal backend.
+
 ### Missing OpenGL packages or unsupported OpenGL version
 
 Install `libgl1-mesa-dev` and an appropriate Mesa or vendor driver. Reflex Engine
@@ -547,10 +687,9 @@ requires OpenGL 3.3 Core and exits nonzero if GLAD cannot load it. `glxinfo -B`
 or `eglinfo` can show the driver version. A remote/headless shell also needs a
 working `DISPLAY` or `WAYLAND_DISPLAY`.
 
-## Recommended Phase 4
+## Recommended Phase 6
 
-A sensible next phase is a deliberately narrow gameplay foundation: authored
-static interaction metadata, a minimal non-ECS game-object boundary, and one
-testable interaction loop. Combat, AI, doors, triggers, rigid bodies, and editor
-work should each remain separately scoped rather than being folded into the
-collision controller.
+A sensible Phase 6 is focused presentation and encounter authoring: a small audio
+layer, licensed sprite/model assets, simple frame animation, surface-authored
+impact effects, and optional authored waypoint navigation. Advanced AI, campaign
+systems, multiplayer, and editor work should remain separately scoped.

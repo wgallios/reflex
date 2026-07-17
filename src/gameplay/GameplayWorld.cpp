@@ -99,7 +99,7 @@ bool GameplayWorld::initialize(const std::vector<GameplayEntityDefinition>& defi
     for (GameplayEntity& entity : entities_) {
         if (entity.authored.type == GameplayEntityType::Door) updateDoorTransform(entity);
     }
-    std::size_t doors = 0, switches = 0, triggers = 0, pickups = 0, damage = 0, checkpoints = 0;
+    std::size_t doors = 0, switches = 0, triggers = 0, pickups = 0, damage = 0, checkpoints = 0, enemies = 0;
     for (const GameplayEntity& entity : entities_) {
         switch (entity.authored.type) {
         case GameplayEntityType::Door: ++doors; break;
@@ -108,6 +108,7 @@ bool GameplayWorld::initialize(const std::vector<GameplayEntityDefinition>& defi
         case GameplayEntityType::Pickup: ++pickups; break;
         case GameplayEntityType::DamageVolume: ++damage; break;
         case GameplayEntityType::Checkpoint: ++checkpoints; break;
+        case GameplayEntityType::EnemySpawn: ++enemies; break;
         }
     }
     std::cout << "Gameplay summary:\n"
@@ -118,6 +119,7 @@ bool GameplayWorld::initialize(const std::vector<GameplayEntityDefinition>& defi
               << "  pickups:           " << pickups << '\n'
               << "  damage volumes:    " << damage << '\n'
               << "  checkpoints:       " << checkpoints << '\n'
+              << "  enemy spawns:      " << enemies << '\n'
               << "  resolved targets:  " << resolved << '\n'
               << "  unresolved targets:" << unresolved << '\n'
               << "  dynamic colliders: " << dynamicCollision.colliders().size() << '\n';
@@ -126,7 +128,8 @@ bool GameplayWorld::initialize(const std::vector<GameplayEntityDefinition>& defi
 
 void GameplayWorld::resetEntity(GameplayEntity& entity) {
     entity.enabled = entity.valid;
-    entity.active = true;
+    entity.active = entity.authored.type == GameplayEntityType::EnemySpawn
+        ? entity.authored.startsActive : true;
     entity.completed = false;
     entity.overlapping = false;
     entity.collected = false;

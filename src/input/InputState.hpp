@@ -14,10 +14,16 @@ public:
     [[nodiscard]] bool wasPressed(SDL_Scancode key) const noexcept;
     [[nodiscard]] float mouseDeltaX() const noexcept;
     [[nodiscard]] float mouseDeltaY() const noexcept;
+    [[nodiscard]] bool mouseButtonDown(unsigned char button) const noexcept;
+    [[nodiscard]] bool mouseButtonPressed(unsigned char button) const noexcept;
+    [[nodiscard]] float mouseWheelY() const noexcept;
 
 private:
     std::array<bool, SDL_SCANCODE_COUNT> keys_{};
     std::array<bool, SDL_SCANCODE_COUNT> pressed_{};
     float mouseDeltaX_{0.0F};
     float mouseDeltaY_{0.0F};
+    std::array<bool, 8> mouseButtons_{};
+    std::array<bool, 8> mouseButtonsPressed_{};
+    float mouseWheelY_{0.0F};
 };

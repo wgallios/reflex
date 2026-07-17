@@ -417,14 +417,15 @@ bool nodeCollisionEnabled(const tinygltf::Node& node) {
     if (node.name.rfind("nocollide_", 0) == 0) {
         return false;
     }
-    if (node.name.rfind("door_", 0) == 0 || node.name.rfind("pickup_", 0) == 0) {
+    if (node.name.rfind("door_", 0) == 0 || node.name.rfind("pickup_", 0) == 0 ||
+        node.name.rfind("enemy_", 0) == 0) {
         return false;
     }
     if (node.extras.IsObject() && node.extras.Has("gameplay_type")) {
         const tinygltf::Value& value = node.extras.Get("gameplay_type");
         if (value.IsString()) {
             const std::string& type = value.Get<std::string>();
-            if (type == "door" || type == "pickup") return false;
+            if (type == "door" || type == "pickup" || type == "enemy_spawn") return false;
         }
     }
     if (node.extras.IsObject() && node.extras.Has("collision")) {
@@ -478,7 +479,8 @@ std::optional<GameplayEntityType> gameplayType(const tinygltf::Node& node) {
             {"door_", GameplayEntityType::Door}, {"switch_", GameplayEntityType::Switch},
             {"trigger_", GameplayEntityType::Trigger}, {"pickup_", GameplayEntityType::Pickup},
             {"damage_", GameplayEntityType::DamageVolume},
-            {"checkpoint_", GameplayEntityType::Checkpoint}};
+            {"checkpoint_", GameplayEntityType::Checkpoint},
+            {"enemy_", GameplayEntityType::EnemySpawn}};
         for (const auto& [prefix, candidate] : prefixes) {
             if (node.name.rfind(prefix, 0) == 0) return candidate;
         }
@@ -490,6 +492,7 @@ std::optional<GameplayEntityType> gameplayType(const tinygltf::Node& node) {
     if (type == "pickup") return GameplayEntityType::Pickup;
     if (type == "damage_volume") return GameplayEntityType::DamageVolume;
     if (type == "checkpoint") return GameplayEntityType::Checkpoint;
+    if (type == "enemy_spawn") return GameplayEntityType::EnemySpawn;
     std::cerr << "Warning: unknown gameplay_type '" << type << "' on node '"
               << node.name << "'.\n";
     return std::nullopt;
@@ -547,13 +550,17 @@ std::optional<GameplayEntityDefinition> gameplayDefinition(
     definition.startsLocked = extraBool(node, "locked", false);
     definition.toggleMode = extraBool(node, "toggle_mode", true);
     definition.pickupType = extraString(node, "pickup_type");
-    definition.itemId = extraString(node, "item_id");
+    definition.itemId = extraString(node, "item_id",
+        extraString(node, "weapon_id", extraString(node, "ammo_type")));
     definition.displayName = extraString(node, "display_name", definition.name);
-    definition.amount = static_cast<int>(extraFloat(node, "amount", 0.0F));
+    definition.amount = static_cast<int>(extraFloat(node, "amount",
+        definition.pickupType == "weapon" ? extraFloat(node, "ammo_grant", 0.0F) : 0.0F));
     definition.damagePerSecond = extraFloat(node, "damage_per_second", 0.0F);
     definition.bypassArmor = extraBool(node, "bypass_armor", false);
     definition.restoreHealth = static_cast<int>(extraFloat(node, "restore_health", 100.0F));
     definition.restoreArmor = static_cast<int>(extraFloat(node, "restore_armor", 0.0F));
+    definition.enemyType = extraString(node, "enemy_type");
+    definition.startsActive = extraBool(node, "starts_active", true);
 
     if (glm::any(glm::lessThanEqual(definition.boxSize, glm::vec3{0.0F}))) {
         std::cerr << "Warning: entity '" << definition.name
@@ -569,7 +576,8 @@ std::optional<GameplayEntityDefinition> gameplayDefinition(
     }
     definition.moveAxis = glm::normalize(definition.moveAxis);
     const bool knownPickup = definition.pickupType == "key" ||
-        definition.pickupType == "health" || definition.pickupType == "armor";
+        definition.pickupType == "health" || definition.pickupType == "armor" ||
+        definition.pickupType == "weapon" || definition.pickupType == "ammo";
     const bool validKey = !definition.itemId.empty() && definition.itemId.size() <= 64 &&
         std::all_of(definition.itemId.begin(), definition.itemId.end(), [](const char character) {
             return std::isalnum(static_cast<unsigned char>(character)) != 0 ||
@@ -577,7 +585,9 @@ std::optional<GameplayEntityDefinition> gameplayDefinition(
         });
     if (*type == GameplayEntityType::Pickup &&
         (!knownPickup || (definition.pickupType == "key" && !validKey) ||
-         (definition.pickupType != "key" && definition.amount <= 0))) {
+         ((definition.pickupType == "health" || definition.pickupType == "armor" ||
+           definition.pickupType == "ammo") && definition.amount <= 0) ||
+         (definition.pickupType == "weapon" && definition.itemId.empty()))) {
         std::cerr << "Warning: pickup '" << definition.name
                   << "' has invalid pickup properties and was disabled.\n";
         return std::nullopt;
@@ -585,6 +595,11 @@ std::optional<GameplayEntityDefinition> gameplayDefinition(
     if (*type == GameplayEntityType::DamageVolume && definition.damagePerSecond <= 0.0F) {
         std::cerr << "Warning: damage volume '" << definition.name
                   << "' has non-positive damage and was disabled.\n";
+        return std::nullopt;
+    }
+    if (*type == GameplayEntityType::EnemySpawn && definition.enemyType.empty()) {
+        std::cerr << "Warning: enemy spawn '" << definition.name
+                  << "' has no enemy_type and was disabled.\n";
         return std::nullopt;
     }
     return definition;

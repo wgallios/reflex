@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.24)
 
 project(ReflexEngine
-    VERSION 0.4.0
+    VERSION 0.5.0
     DESCRIPTION "A 1999-2004-inspired first-person shooter engine"
     LANGUAGES C CXX
 )
@@ -20,6 +20,8 @@ add_executable(reflex_engine
     src/collision/CollisionQueries.cpp
     src/collision/CollisionWorld.cpp
     src/collision/DynamicCollisionWorld.cpp
+    src/combat/CombatTypes.cpp
+    src/combat/CombatSystem.cpp
     src/gameplay/PlayerController.cpp
     src/gameplay/PlayerState.cpp
     src/gameplay/GameplayWorld.cpp
@@ -87,6 +89,8 @@ if(BUILD_TESTING)
 
     add_executable(reflex_engine_gameplay_tests
         tests/GameplayTests.cpp
+        src/combat/CombatTypes.cpp
+        src/combat/CombatSystem.cpp
         src/collision/CollisionQueries.cpp
         src/collision/CollisionWorld.cpp
         src/collision/DynamicCollisionWorld.cpp
@@ -104,6 +108,30 @@ if(BUILD_TESTING)
         target_compile_options(reflex_engine_gameplay_tests PRIVATE -Wall -Wextra -Wpedantic)
     endif()
     add_test(NAME gameplay_persistence COMMAND reflex_engine_gameplay_tests)
+
+    add_executable(reflex_engine_combat_tests
+        tests/CombatTests.cpp
+        src/combat/CombatTypes.cpp
+        src/combat/CombatSystem.cpp
+        src/collision/CollisionQueries.cpp
+        src/collision/CollisionWorld.cpp
+        src/collision/DynamicCollisionWorld.cpp
+        src/gameplay/PlayerState.cpp
+        src/gameplay/GameplayWorld.cpp
+        src/persistence/SaveGame.cpp
+        src/rendering/Mesh.cpp
+        src/rendering/Texture.cpp
+    )
+    target_include_directories(reflex_engine_combat_tests PRIVATE src)
+    target_compile_definitions(reflex_engine_combat_tests PRIVATE
+        REFLEX_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
+    target_link_libraries(reflex_engine_combat_tests PRIVATE glm::glm glad_gl_core_33 nlohmann_json::nlohmann_json)
+    if(MSVC)
+        target_compile_options(reflex_engine_combat_tests PRIVATE /W4 /permissive-)
+    else()
+        target_compile_options(reflex_engine_combat_tests PRIVATE -Wall -Wextra -Wpedantic)
+    endif()
+    add_test(NAME combat_system COMMAND reflex_engine_combat_tests)
 endif()
 
 add_custom_command(TARGET reflex_engine POST_BUILD

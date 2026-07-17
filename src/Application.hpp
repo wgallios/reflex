@@ -2,6 +2,7 @@
 
 #include "Window.hpp"
 #include "collision/DynamicCollisionWorld.hpp"
+#include "combat/CombatSystem.hpp"
 #include "debug/DebugDraw.hpp"
 #include "gameplay/GameplayWorld.hpp"
 #include "gameplay/PlayerController.hpp"
@@ -47,12 +48,18 @@ private:
     PlayerController player_;
     DynamicCollisionWorld dynamicCollision_;
     GameplayWorld gameplay_;
+    CombatSystem combat_;
     std::filesystem::path scenePath_;
     double simulationAccumulator_{0.0};
     float diagnosticLogAccumulator_{0.0F};
     bool pendingJump_{false};
     bool collisionDiagnosticsVisible_{false};
     bool gameplayDiagnosticsVisible_{false};
+    bool combatDiagnosticsVisible_{false};
+    bool pendingFire_{false};
+    bool pendingReload_{false};
+    int pendingWeaponSlot_{-1};
+    int pendingWeaponCycle_{0};
     float deathTimer_{0.0F};
     int framebufferWidth_{1280};
     int framebufferHeight_{720};

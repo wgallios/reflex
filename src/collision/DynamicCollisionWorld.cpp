@@ -104,14 +104,16 @@ void DynamicCollisionWorld::upsert(const EntityId owner, const AABB& bounds,
 
 bool DynamicCollisionWorld::sweepCapsule(const Capsule& capsule,
                                          const glm::vec3& displacement,
-                                         CollisionSweepHit& hit) const noexcept {
+                                         CollisionSweepHit& hit,
+                                         const EntityId ignoredOwner,
+                                         EntityId* hitOwner) const noexcept {
     const float length = glm::length(displacement);
     if (length < epsilon) return false;
     const glm::vec3 direction = displacement / length;
     bool found = false;
     float best = length;
     for (const DynamicCollider& collider : colliders_) {
-        if (!collider.enabled) continue;
+        if (!collider.enabled || collider.owner == ignoredOwner) continue;
         AABB expanded = collider.bounds;
         expanded.minimum -= glm::vec3{capsule.radius};
         expanded.maximum += glm::vec3{capsule.radius};
@@ -129,6 +131,7 @@ bool DynamicCollisionWorld::sweepCapsule(const Capsule& capsule,
                 hit.fraction = std::clamp(distance / length, 0.0F, 1.0F);
                 hit.normal = normal;
                 hit.point = center + direction * distance - normal * capsule.radius;
+                if (hitOwner != nullptr) *hitOwner = collider.owner;
             }
         }
     }
@@ -159,7 +162,8 @@ bool DynamicCollisionWorld::overlapCapsule(const Capsule& capsule, glm::vec3* no
 
 bool DynamicCollisionWorld::raycast(const glm::vec3& origin, const glm::vec3& direction,
                                     const float maximumDistance, RayHit& hit,
-                                    const EntityId ignoredOwner) const noexcept {
+                                    const EntityId ignoredOwner,
+                                    EntityId* hitOwner) const noexcept {
     bool found = false;
     float closest = maximumDistance;
     for (const DynamicCollider& collider : colliders_) {
@@ -170,6 +174,7 @@ bool DynamicCollisionWorld::raycast(const glm::vec3& origin, const glm::vec3& di
             found = true;
             closest = distance;
             hit = {distance, origin + direction * distance, normal};
+            if (hitOwner != nullptr) *hitOwner = collider.owner;
         }
     }
     return found;

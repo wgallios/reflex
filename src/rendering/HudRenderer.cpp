@@ -116,6 +116,21 @@ void HudRenderer::crosshair(const glm::vec3& color) {
     rectangle(x - 1.0F, y - 6.0F, 2.0F, 12.0F, color);
 }
 
+void HudRenderer::weaponPlaceholder(const float recoil, const bool reloading,
+                                    const bool muzzleFlash) {
+    const float center = static_cast<float>(width_) * 0.5F;
+    const float baseY = static_cast<float>(height_) - 118.0F + recoil * 28.0F;
+    const glm::vec3 body = reloading ? glm::vec3{0.35F, 0.3F, 0.2F}
+                                     : glm::vec3{0.18F, 0.22F, 0.28F};
+    rectangle(center - 48.0F, baseY, 96.0F, 118.0F, body);
+    rectangle(center - 20.0F, baseY - 52.0F, 40.0F, 58.0F, {0.3F, 0.34F, 0.38F});
+    rectangle(center - 8.0F, baseY - 68.0F, 16.0F, 18.0F, {0.12F, 0.14F, 0.16F});
+    if (muzzleFlash) {
+        rectangle(center - 18.0F, baseY - 92.0F, 36.0F, 25.0F, {1.0F, 0.55F, 0.08F});
+        rectangle(center - 7.0F, baseY - 105.0F, 14.0F, 45.0F, {1.0F, 0.9F, 0.2F});
+    }
+}
+
 void HudRenderer::render() {
     if (vertices_.empty()) return;
     glDisable(GL_DEPTH_TEST); glDisable(GL_CULL_FACE); shader_.use();
@@ -131,4 +146,3 @@ void HudRenderer::release() noexcept {
     if (vertexArray_ != 0) glDeleteVertexArrays(1, &vertexArray_);
     vertexBuffer_ = 0; vertexArray_ = 0;
 }
-
