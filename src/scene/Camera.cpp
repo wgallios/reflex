@@ -8,12 +8,10 @@
 
 void Camera::update(const InputState& input, const float deltaTimeSeconds,
                     const bool mouseCaptured) {
-    if (mouseCaptured) {
-        yawDegrees_ += input.mouseDeltaX() * mouseSensitivity_;
-        pitchDegrees_ -= input.mouseDeltaY() * mouseSensitivity_;
-        pitchDegrees_ = glm::clamp(pitchDegrees_, -89.0F, 89.0F);
-    }
+    updateLook(input, mouseCaptured);
 
+    // Retained for the Phase 2 camera test and standalone noclip use. Phase 3
+    // movement is driven by PlayerController and calls updateLook directly.
     glm::vec3 movement{};
     if (input.isDown(SDL_SCANCODE_W)) {
         movement += forward();
@@ -33,7 +31,6 @@ void Camera::update(const InputState& input, const float deltaTimeSeconds,
     if (input.isDown(SDL_SCANCODE_LCTRL)) {
         movement -= glm::vec3{0.0F, 1.0F, 0.0F};
     }
-
     const float length = glm::length(movement);
     if (length > 0.0F) {
         const float sprint = input.isDown(SDL_SCANCODE_LSHIFT) ? sprintMultiplier_ : 1.0F;
@@ -41,11 +38,24 @@ void Camera::update(const InputState& input, const float deltaTimeSeconds,
     }
 }
 
+void Camera::updateLook(const InputState& input, const bool mouseCaptured) {
+    if (mouseCaptured) {
+        yawDegrees_ += input.mouseDeltaX() * mouseSensitivity_;
+        pitchDegrees_ -= input.mouseDeltaY() * mouseSensitivity_;
+        pitchDegrees_ = glm::clamp(pitchDegrees_, -89.0F, 89.0F);
+    }
+
+}
+
 void Camera::setAspectRatio(const float aspectRatio) noexcept {
     if (aspectRatio > 0.0F) {
         aspectRatio_ = aspectRatio;
     }
 }
+
+void Camera::setPosition(const glm::vec3& position) noexcept { position_ = position; }
+void Camera::setYawDegrees(const float yawDegrees) noexcept { yawDegrees_ = yawDegrees; }
+float Camera::yawDegrees() const noexcept { return yawDegrees_; }
 
 glm::mat4 Camera::viewMatrix() const {
     return glm::lookAt(position_, position_ + forward(), up());

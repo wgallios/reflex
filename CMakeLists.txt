@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.24)
 
 project(ReflexEngine
-    VERSION 0.2.0
+    VERSION 0.3.0
     DESCRIPTION "A 1999-2004-inspired first-person shooter engine"
     LANGUAGES C CXX
 )
@@ -17,6 +17,10 @@ add_executable(reflex_engine
     src/Application.cpp
     src/Window.cpp
     src/input/InputState.cpp
+    src/collision/CollisionQueries.cpp
+    src/collision/CollisionWorld.cpp
+    src/gameplay/PlayerController.cpp
+    src/debug/DebugDraw.cpp
     src/rendering/Mesh.cpp
     src/rendering/Renderer.cpp
     src/rendering/Shader.cpp
@@ -58,6 +62,21 @@ if(BUILD_TESTING)
         target_compile_options(reflex_engine_camera_tests PRIVATE -Wall -Wextra -Wpedantic)
     endif()
     add_test(NAME camera_input COMMAND reflex_engine_camera_tests)
+
+    add_executable(reflex_engine_collision_tests
+        tests/CollisionTests.cpp
+        src/collision/CollisionQueries.cpp
+        src/collision/CollisionWorld.cpp
+        src/gameplay/PlayerController.cpp
+    )
+    target_include_directories(reflex_engine_collision_tests PRIVATE src)
+    target_link_libraries(reflex_engine_collision_tests PRIVATE glm::glm)
+    if(MSVC)
+        target_compile_options(reflex_engine_collision_tests PRIVATE /W4 /permissive-)
+    else()
+        target_compile_options(reflex_engine_collision_tests PRIVATE -Wall -Wextra -Wpedantic)
+    endif()
+    add_test(NAME collision_math COMMAND reflex_engine_collision_tests)
 endif()
 
 add_custom_command(TARGET reflex_engine POST_BUILD

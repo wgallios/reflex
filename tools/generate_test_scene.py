@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate Reflex Engine's small, original, dependency-free Phase 2 test GLB."""
+"""Generate Reflex Engine's original, dependency-free Phase 3 collision test GLB."""
 
 import json
 import pathlib
@@ -39,10 +39,10 @@ def pack_vertices(vertices: list[tuple[float, ...]]) -> bytes:
 
 
 floor_vertices = [
-    (-5, 0, -5, 0, 1, 0, 0, 0),
-    (5, 0, -5, 0, 1, 0, 5, 0),
-    (5, 0, 5, 0, 1, 0, 5, 5),
-    (-5, 0, 5, 0, 1, 0, 0, 5),
+    (-12, 0, -12, 0, 1, 0, 0, 0),
+    (12, 0, -12, 0, 1, 0, 12, 0),
+    (12, 0, 12, 0, 1, 0, 12, 12),
+    (-12, 0, 12, 0, 1, 0, 0, 12),
 ]
 floor_indices = (0, 2, 1, 0, 3, 2)
 
@@ -90,7 +90,7 @@ align(binary)
 
 accessors = [
     {"bufferView": floor_vertex_view, "byteOffset": 0, "componentType": 5126,
-     "count": 4, "type": "VEC3", "min": [-5, 0, -5], "max": [5, 0, 5]},
+     "count": 4, "type": "VEC3", "min": [-12, 0, -12], "max": [12, 0, 12]},
     {"bufferView": floor_vertex_view, "byteOffset": 12, "componentType": 5126,
      "count": 4, "type": "VEC3"},
     {"bufferView": floor_vertex_view, "byteOffset": 24, "componentType": 5126,
@@ -105,16 +105,61 @@ accessors = [
     {"bufferView": cube_index_view, "componentType": 5121, "count": 36, "type": "SCALAR"},
 ]
 
+nodes: list[dict] = [
+    {"name": "Textured Floor", "mesh": 0},
+    {"name": "player_spawn", "translation": [0, 0.02, 8]},
+]
+
+
+def box(name: str, translation: list[float], scale: list[float],
+        rotation: list[float] | None = None, extras: dict | None = None) -> None:
+    node: dict = {"name": name, "mesh": 1, "translation": translation, "scale": scale}
+    if rotation is not None:
+        node["rotation"] = rotation
+    if extras is not None:
+        node["extras"] = extras
+    nodes.append(node)
+
+
+# Enclosure, doorway, corridor, low ceiling, and corner tests.
+box("wall_west", [-11.5, 2, 0], [0.5, 2, 12])
+box("wall_east", [11.5, 2, 0], [0.5, 2, 12])
+box("wall_north", [0, 2, -11.5], [12, 2, 0.5])
+box("wall_south_left", [-7, 2, 11.5], [5, 2, 0.5])
+box("wall_south_right", [7, 2, 11.5], [5, 2, 0.5])
+box("door_header", [0, 3.5, 11.5], [2, 0.5, 0.5])
+box("low_ceiling", [-7, 2.25, 5], [3, 0.2, 3])
+box("corridor_left", [5, 1.5, 5], [0.25, 1.5, 3])
+box("corridor_right", [7, 1.5, 5], [0.25, 1.5, 3])
+box("inside_corner_a", [8.5, 1.5, -7], [2.5, 1.5, 0.25])
+box("inside_corner_b", [8.5, 1.5, -9.25], [0.25, 1.5, 2])
+
+# Four 0.3 m steps. Cube scale is half extent, so each top rises by 0.3 m.
+for step in range(4):
+    height = 0.3 * (step + 1)
+    box(f"step_{step + 1}", [-6, height / 2, 1.5 - step * 0.55],
+        [1.5, height / 2, 0.275])
+
+# A low step, a deliberately too-tall ledge, and a fall platform.
+box("low_step", [1.5, 0.15, 4], [1.5, 0.15, 1])
+box("high_ledge", [1.5, 0.5, 0.5], [1.5, 0.5, 1])
+box("elevated_platform", [0, 2.0, -8], [2.5, 0.2, 2])
+
+# Thin rotated boxes form approximately 22-degree and 58-degree ramps.
+box("walkable_ramp", [-4, 0.75, -5], [1.5, 0.12, 2.0],
+    [-0.190809, 0, 0, 0.981627])
+box("steep_ramp", [3, 1.25, -5], [1.5, 0.12, 1.5],
+    [-0.48481, 0, 0, 0.87462])
+
+# Exercises extras-based collision exclusion.
+box("visual_marker", [0, 1.5, 7], [0.25, 0.25, 0.25],
+    extras={"collision": False})
+
 document = {
     "asset": {"version": "2.0", "generator": "Reflex Engine test scene generator"},
     "scene": 0,
-    "scenes": [{"name": "Test Scene", "nodes": [0, 1]}],
-    "nodes": [
-        {"name": "Textured Floor", "mesh": 0},
-        {"name": "Transform Parent", "translation": [1.5, 0, 0], "children": [2]},
-        {"name": "Nested Color Cube", "mesh": 1, "translation": [0, 1, -2],
-         "rotation": [0, 0.258819, 0, 0.965926], "scale": [0.75, 0.75, 0.75]},
-    ],
+    "scenes": [{"name": "Phase 3 Collision Course", "nodes": list(range(len(nodes)))}],
+    "nodes": nodes,
     "meshes": [
         {"name": "Floor", "primitives": [{"attributes": {"POSITION": 0, "NORMAL": 1,
                                                                "TEXCOORD_0": 2},

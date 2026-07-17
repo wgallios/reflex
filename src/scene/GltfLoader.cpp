@@ -38,6 +38,11 @@ struct LoadStatistics {
     std::size_t indices{0};
 };
 
+struct CpuPrimitive {
+    std::vector<glm::vec3> positions;
+    std::vector<std::uint32_t> indices;
+};
+
 template <typename T>
 T readUnaligned(const unsigned char* data) {
     static_assert(std::is_trivially_copyable_v<T>);
@@ -405,6 +410,30 @@ glm::mat4 nodeLocalTransform(const tinygltf::Node& node) {
     return glm::translate(glm::mat4{1.0F}, translation) * glm::mat4_cast(rotation) *
            glm::scale(glm::mat4{1.0F}, scale);
 }
+
+bool nodeCollisionEnabled(const tinygltf::Node& node) {
+    if (node.name.rfind("nocollide_", 0) == 0) {
+        return false;
+    }
+    if (node.extras.IsObject() && node.extras.Has("collision")) {
+        const tinygltf::Value& value = node.extras.Get("collision");
+        if (value.IsBool()) {
+            return value.Get<bool>();
+        }
+    }
+    return true;
+}
+
+bool isPlayerSpawn(const tinygltf::Node& node) {
+    if (node.name == "player_spawn") {
+        return true;
+    }
+    if (node.extras.IsObject() && node.extras.Has("type")) {
+        const tinygltf::Value& value = node.extras.Get("type");
+        return value.IsString() && value.Get<std::string>() == "player_spawn";
+    }
+    return false;
+}
 } // namespace
 
 bool GltfLoader::loadGlb(const std::filesystem::path& path, Scene& scene) const {
@@ -413,7 +442,7 @@ bool GltfLoader::loadGlb(const std::filesystem::path& path, Scene& scene) const 
         return false;
     }
     if (path.extension() != ".glb") {
-        std::cerr << "Phase 2 supports binary glTF .glb scenes only: " << path << '\n';
+        std::cerr << "Reflex Engine supports binary glTF .glb scenes only: " << path << '\n';
         return false;
     }
 
@@ -465,10 +494,13 @@ bool GltfLoader::loadGlb(const std::filesystem::path& path, Scene& scene) const 
 
     LoadStatistics statistics;
     std::vector<std::vector<std::optional<std::size_t>>> meshPrimitiveMap(model.meshes.size());
+    std::vector<std::vector<std::optional<CpuPrimitive>>> cpuPrimitiveMap(model.meshes.size());
     for (std::size_t meshIndex = 0; meshIndex < model.meshes.size(); ++meshIndex) {
         const tinygltf::Mesh& sourceMesh = model.meshes[meshIndex];
         auto& primitiveMap = meshPrimitiveMap[meshIndex];
         primitiveMap.resize(sourceMesh.primitives.size());
+        auto& cpuPrimitives = cpuPrimitiveMap[meshIndex];
+        cpuPrimitives.resize(sourceMesh.primitives.size());
 
         for (std::size_t primitiveIndex = 0;
              primitiveIndex < sourceMesh.primitives.size(); ++primitiveIndex) {
@@ -552,6 +584,7 @@ bool GltfLoader::loadGlb(const std::filesystem::path& path, Scene& scene) const 
                 return false;
             }
             primitiveMap[primitiveIndex] = newScene.meshes.size();
+            cpuPrimitives[primitiveIndex] = CpuPrimitive{positions, indices};
             newScene.meshes.push_back(std::move(mesh));
             ++statistics.primitives;
             statistics.vertices += vertices.size();
@@ -569,6 +602,9 @@ bool GltfLoader::loadGlb(const std::filesystem::path& path, Scene& scene) const 
         return false;
     }
 
+    std::vector<Triangle> collisionTriangles;
+    collisionTriangles.reserve(statistics.indices / 3);
+    std::size_t degenerateTriangles = 0;
     std::vector<bool> recursionStack(model.nodes.size(), false);
     std::function<bool(int, const glm::mat4&)> visitNode;
     visitNode = [&](const int nodeIndex, const glm::mat4& parentTransform) {
@@ -585,6 +621,18 @@ bool GltfLoader::loadGlb(const std::filesystem::path& path, Scene& scene) const 
         const tinygltf::Node& node = model.nodes[static_cast<std::size_t>(nodeIndex)];
         const glm::mat4 worldTransform = parentTransform * nodeLocalTransform(node);
 
+        if (isPlayerSpawn(node) && !newScene.hasPlayerSpawn) {
+            newScene.playerSpawnPosition = glm::vec3{worldTransform[3]};
+            glm::vec3 forward = glm::vec3{worldTransform *
+                glm::vec4{0.0F, 0.0F, -1.0F, 0.0F}};
+            if (glm::length(forward) > 0.000001F) {
+                forward = glm::normalize(forward);
+                newScene.playerSpawnYawDegrees =
+                    glm::degrees(std::atan2(forward.z, forward.x));
+            }
+            newScene.hasPlayerSpawn = true;
+        }
+
         if (node.mesh >= 0 && static_cast<std::size_t>(node.mesh) < meshPrimitiveMap.size()) {
             const auto& primitiveMap = meshPrimitiveMap[static_cast<std::size_t>(node.mesh)];
             const auto& sourcePrimitives = model.meshes[static_cast<std::size_t>(node.mesh)].primitives;
@@ -592,6 +640,28 @@ bool GltfLoader::loadGlb(const std::filesystem::path& path, Scene& scene) const 
                 if (primitiveMap[i].has_value()) {
                     newScene.primitives.push_back(ScenePrimitive{
                         *primitiveMap[i], sourcePrimitives[i].material, worldTransform});
+                }
+                if (nodeCollisionEnabled(node) && cpuPrimitiveMap[static_cast<std::size_t>(node.mesh)][i]) {
+                    const CpuPrimitive& cpu =
+                        *cpuPrimitiveMap[static_cast<std::size_t>(node.mesh)][i];
+                    for (std::size_t index = 0; index + 2 < cpu.indices.size(); index += 3) {
+                        Triangle triangle;
+                        triangle.a = glm::vec3{worldTransform * glm::vec4{cpu.positions[cpu.indices[index]], 1.0F}};
+                        triangle.b = glm::vec3{worldTransform * glm::vec4{cpu.positions[cpu.indices[index + 1]], 1.0F}};
+                        triangle.c = glm::vec3{worldTransform * glm::vec4{cpu.positions[cpu.indices[index + 2]], 1.0F}};
+                        const glm::vec3 cross = glm::cross(triangle.b - triangle.a,
+                                                         triangle.c - triangle.a);
+                        const float areaTwice = glm::length(cross);
+                        if (areaTwice <= 0.000001F) {
+                            ++degenerateTriangles;
+                            continue;
+                        }
+                        triangle.normal = cross / areaTwice;
+                        triangle.bounds.expand(triangle.a);
+                        triangle.bounds.expand(triangle.b);
+                        triangle.bounds.expand(triangle.c);
+                        collisionTriangles.push_back(triangle);
+                    }
                 }
             }
         } else if (node.mesh >= 0) {
@@ -613,6 +683,21 @@ bool GltfLoader::loadGlb(const std::filesystem::path& path, Scene& scene) const 
         }
     }
 
+    if (degenerateTriangles > 0) {
+        std::cerr << "Warning: skipped " << degenerateTriangles
+                  << " degenerate collision triangles.\n";
+    }
+    if (!newScene.collisionWorld.build(std::move(collisionTriangles))) {
+        std::cerr << "Failed to build the collision spatial index.\n";
+        return false;
+    }
+    if (newScene.collisionWorld.empty()) {
+        std::cerr << "Warning: scene contains no collision triangles; starting in noclip mode.\n";
+    }
+    if (!newScene.hasPlayerSpawn) {
+        std::cerr << "Warning: no player_spawn node; using fallback (0, 1, 5).\n";
+    }
+
     scene = std::move(newScene);
     std::cout << "Loaded scene:       " << path << '\n'
               << "  nodes:            " << model.nodes.size() << '\n'
@@ -622,5 +707,8 @@ bool GltfLoader::loadGlb(const std::filesystem::path& path, Scene& scene) const 
               << "  textures:         " << model.textures.size() << '\n'
               << "  uploaded vertices: " << statistics.vertices << '\n'
               << "  uploaded indices: " << statistics.indices << '\n';
+    std::cout << "  player spawn:     (" << scene.playerSpawnPosition.x << ", "
+              << scene.playerSpawnPosition.y << ", " << scene.playerSpawnPosition.z
+              << ")\n";
     return true;
 }

@@ -8,7 +8,11 @@
 class Camera {
 public:
     void update(const InputState& input, float deltaTimeSeconds, bool mouseCaptured);
+    void updateLook(const InputState& input, bool mouseCaptured);
     void setAspectRatio(float aspectRatio) noexcept;
+    void setPosition(const glm::vec3& position) noexcept;
+    void setYawDegrees(float yawDegrees) noexcept;
+    [[nodiscard]] float yawDegrees() const noexcept;
 
     [[nodiscard]] glm::mat4 viewMatrix() const;
     [[nodiscard]] glm::mat4 projectionMatrix() const;

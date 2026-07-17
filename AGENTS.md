@@ -6,9 +6,10 @@ Reflex Engine is a small C++20, cross-platform 3D engine for first-person
 shooters inspired by the 1999-2004 era. Linux is the primary development target,
 but changes should remain portable to Windows.
 
-The current implementation is Phase 2: an SDL3/OpenGL 3.3 Core platform shell
-that loads static Blender-exported `.glb` environments and renders them with a
-noclip camera. Preserve this working behavior when extending the engine.
+The current implementation is Phase 3: an SDL3/OpenGL 3.3 Core platform shell
+that renders static Blender-exported `.glb` environments and provides a
+collision-aware kinematic FPS controller plus noclip debugging. Preserve this
+working behavior when extending the engine.
 
 ## Build and validation
 
@@ -48,11 +49,17 @@ compiler warnings.
 - `Window` exclusively owns the SDL window and OpenGL context and polls SDL
   events.
 - `InputState` centralizes keyboard and relative-mouse input.
-- `Camera` owns perspective and noclip camera state.
-- `GltfLoader` parses glTF and uploads scene resources.
+- `Camera` owns perspective/view state; `PlayerController` drives its position.
+- `GltfLoader` parses glTF, uploads scene resources, and extracts static
+  world-space collision triangles once per scene load.
 - `Renderer` draws loaded scene primitives using the static-mesh shader.
+- `CollisionWorld` owns CPU triangles and a deterministic BVH; collision queries
+  do not depend on OpenGL or SDL.
+- `PlayerController` holds a non-owning collision-world reference and owns
+  kinematic position, velocity, grounding, steps, and noclip mode.
+- `DebugDraw` owns the dynamic OpenGL line buffer used by F3 diagnostics.
 - `Shader`, `Mesh`, and `Texture` are move-only RAII wrappers for OpenGL objects.
-- `Scene` owns GPU meshes and textures plus materials and draw instances.
+- `Scene` owns GPU scene resources, draw instances, collision data, and spawn data.
 
 OpenGL resources must be destroyed while the context is still current. In
 particular, clear `Renderer` and `Scene` resources before calling
@@ -84,7 +91,7 @@ render interfaces, or other speculative abstractions.
 
 Runtime shaders live in `assets/shaders/`. The default scene is
 `assets/levels/test_scene.glb`. The build copies `assets/` beside the executable.
-Regenerate the original test scene with:
+Regenerate the Phase 3 collision course with:
 
 ```bash
 python3 tools/generate_test_scene.py
@@ -103,15 +110,13 @@ implementation macros in headers.
 
 ## Scope boundary
 
-Phase 2 supports static textured GLB scenes and noclip exploration. Do not add
-Phase 3 or gameplay features unless the user explicitly requests that phase.
+Phase 3 stops at static-world kinematic FPS movement. Do not add later gameplay
+or general physics features unless the user explicitly requests a new phase.
 Out-of-scope systems currently include:
 
-- collision detection and trigger volumes;
-- gravity, grounded movement, jumping, and stairs;
-- rigid-body physics;
-- weapons, enemies, and gameplay entities;
+- trigger volumes, moving platforms/doors, and rigid-body physics;
+- weapons, firing, damage, health, enemies, AI, and pickups;
 - scripting, save/load, an editor, or an ECS.
 
-When Phase 3 is authorized, extend the existing architecture incrementally and
-keep collision-aware movement separate from rendering and glTF parsing.
+Keep collision math and movement separate from rendering. New pure geometry
+behavior should have coverage in `reflex_engine_collision_tests`.

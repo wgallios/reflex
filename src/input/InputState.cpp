@@ -3,6 +3,7 @@
 #include <cstddef>
 
 void InputState::beginFrame() noexcept {
+    pressed_.fill(false);
     mouseDeltaX_ = 0.0F;
     mouseDeltaY_ = 0.0F;
 }
@@ -11,6 +12,9 @@ void InputState::handleEvent(const SDL_Event& event) noexcept {
     if (event.type == SDL_EVENT_KEY_DOWN || event.type == SDL_EVENT_KEY_UP) {
         const auto index = static_cast<std::size_t>(event.key.scancode);
         if (index < keys_.size()) {
+            if (event.type == SDL_EVENT_KEY_DOWN && !event.key.repeat && !keys_[index]) {
+                pressed_[index] = true;
+            }
             keys_[index] = event.type == SDL_EVENT_KEY_DOWN;
         }
     } else if (event.type == SDL_EVENT_MOUSE_MOTION) {
@@ -21,7 +25,13 @@ void InputState::handleEvent(const SDL_Event& event) noexcept {
 
 void InputState::clear() noexcept {
     keys_.fill(false);
+    pressed_.fill(false);
     beginFrame();
+}
+
+bool InputState::wasPressed(const SDL_Scancode key) const noexcept {
+    const auto index = static_cast<std::size_t>(key);
+    return index < pressed_.size() && pressed_[index];
 }
 
 bool InputState::isDown(const SDL_Scancode key) const noexcept {
