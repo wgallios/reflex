@@ -1,0 +1,48 @@
+{
+  "format_version": 1,
+  "id": "facility_01",
+  "display_name": "Facility Entrance",
+  "scene": "assets/levels/phase6_level01.glb",
+  "navigation": "assets/levels/phase6_level01.nav",
+  "audio_manifest": "assets/audio/audio.json",
+  "music": "campaign_music",
+  "next_level": "facility_02",
+  "next_level_definition": "assets/campaign/level02.json",
+  "objectives": [
+    {
+      "id": "reach_arena",
+      "type": "ReachLocation",
+      "text": "Reach the training arena.",
+      "target": "trigger_auto_door",
+      "starts_active": true,
+      "next_objective": "clear_arena"
+    },
+    {
+      "id": "clear_arena",
+      "type": "ClearEncounter",
+      "text": "Eliminate the arena guards.",
+      "target": "training_encounter",
+      "next_objective": "reach_exit"
+    },
+    {
+      "id": "reach_exit",
+      "type": "ExitLevel",
+      "text": "Proceed to the service tunnels.",
+      "target": "trigger_auto_door"
+    }
+  ],
+  "encounters": [
+    {
+      "id": "training_encounter",
+      "start_trigger": "trigger_auto_door",
+      "lock_doors": ["door_auto"],
+      "waves": [
+        {"delay": 0.0, "activate_groups": ["training_wave"]}
+      ],
+      "completion": {
+        "open_doors": ["door_auto"],
+        "complete_objective": "clear_arena"
+      }
+    }
+  ]
+}

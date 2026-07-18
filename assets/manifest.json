@@ -1,0 +1,13 @@
+{
+  "format_version": 1,
+  "assets": [
+    {"id": "facility_01", "type": "level", "path": "assets/campaign/level01.json"},
+    {"id": "facility_02", "type": "level", "path": "assets/campaign/level02.json"},
+    {"id": "grunt_model", "type": "model", "path": "assets/models/grunt.glb"},
+    {"id": "pistol_viewmodel", "type": "model", "path": "assets/models/pistol_viewmodel.glb"},
+    {"id": "combat_definitions", "type": "weapons", "path": "assets/combat/combat.json"},
+    {"id": "audio_definitions", "type": "sound", "path": "assets/audio/audio.json"},
+    {"id": "facility_01_navigation", "type": "navigation", "path": "assets/levels/phase6_level01.nav"},
+    {"id": "facility_02_navigation", "type": "navigation", "path": "assets/levels/phase6_level02.nav"}
+  ]
+}

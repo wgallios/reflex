@@ -3,6 +3,7 @@
 #include "collision/CollisionWorld.hpp"
 #include "gameplay/GameplayWorld.hpp"
 #include "scene/Scene.hpp"
+#include "navigation/NavigationSystem.hpp"
 
 #include <glm/common.hpp>
 #include <glm/ext/matrix_transform.hpp>
@@ -43,12 +44,14 @@ glm::vec3 translation(const glm::mat4& value) { return glm::vec3{value[3]}; }
 
 bool CombatSystem::initialize(const std::filesystem::path& definitionPath, Scene& scene,
                               GameplayWorld& gameplay, const CollisionWorld& collision,
-                              DynamicCollisionWorld& dynamicCollision) {
+                              DynamicCollisionWorld& dynamicCollision,
+                              reflex::navigation::NavigationSystem* navigation) {
     std::string error;
     if (!loadCombatDefinitions(definitionPath, definitions_, error)) {
         std::cerr << "Failed to load combat definitions: " << error << '\n'; return false;
     }
     scene_=&scene; gameplay_=&gameplay; collision_=&collision; dynamicCollision_=&dynamicCollision;
+    navigation_=navigation;
     weaponDefinitions_.clear(); enemyDefinitions_.clear();
     for(std::size_t i=0;i<definitions_.weapons.size();++i) weaponDefinitions_[definitions_.weapons[i].id]=i;
     for(std::size_t i=0;i<definitions_.enemies.size();++i) enemyDefinitions_[definitions_.enemies[i].id]=i;
@@ -72,21 +75,25 @@ bool CombatSystem::initialize(const std::filesystem::path& definitionPath, Scene
             }
         }
     }
-    enemies_.clear(); enemiesById_.clear();
+    enemies_.clear(); enemiesById_.clear(); navigationAgents_.clear();
     for(GameplayEntity& entity:gameplay.mutableEntities()) {
         if(entity.authored.type!=GameplayEntityType::EnemySpawn) continue;
         const EnemyDefinition* definition=enemyDefinition(entity.authored.enemyType);
         if(definition==nullptr){std::cerr<<"Warning: enemy spawn '"<<entity.authored.name<<"' references unknown type '"<<entity.authored.enemyType<<"'.\n";entity.enabled=false;entity.active=false;for(const std::size_t index:entity.authored.primitiveIndices)if(index<scene.primitives.size())scene.primitives[index].visible=false;continue;}
         EnemyActor actor; actor.id=entity.authored.id; actor.name=entity.authored.name;
         actor.definitionId=entity.authored.enemyType; actor.primitiveIndices=entity.authored.primitiveIndices;
+        actor.skinnedPrimitiveIndices=entity.authored.skinnedPrimitiveIndices;
         actor.spawnPosition=translation(entity.authored.authoredWorldTransform) -
             glm::vec3{0.0F, definition->height * 0.5F, 0.0F};
         actor.position=actor.spawnPosition;
         glm::vec3 forward{entity.authored.authoredWorldTransform*glm::vec4{0,0,-1,0}};
         if(glm::length(forward)>0.000001F) actor.forward=glm::normalize(forward);
         actor.health=definition->maximumHealth; actor.startsActive=entity.authored.startsActive;
+        actor.group=entity.authored.group;
         actor.active=actor.startsActive; actor.state=EnemyState::Idle;
         enemiesById_[actor.id]=enemies_.size(); enemies_.push_back(std::move(actor));
+        navigationAgents_.emplace(enemies_.back().id, reflex::navigation::NavigationAgentState{
+            enemies_.back().position, {}, 0, 0.0F, 0.4F, 0.0F, enemies_.back().position});
     }
     reset();
     std::cout<<"Combat summary:\n  weapons:       "<<definitions_.weapons.size()
@@ -273,7 +280,17 @@ void CombatSystem::updateEnemies(const float dt,const glm::vec3& playerPosition,
 }
 
 void CombatSystem::moveEnemy(EnemyActor& actor,const EnemyDefinition& def,const float dt,const glm::vec3& target) {
-    glm::vec3 delta=target-actor.position;delta.y=0;if(glm::length(delta)<0.1F)return;glm::vec3 remaining=glm::normalize(delta)*def.movementSpeed*dt;Capsule shape{actor.position,def.height,def.radius};
+    glm::vec3 steeringTarget=target;
+    if(navigation_!=nullptr&&navigation_->ready()){
+        auto&agent=navigationAgents_[actor.id];
+        if(agent.shouldRepath(actor.position,target,dt)){
+            reflex::navigation::NavigationPath path=navigation_->findPath(actor.position,target);
+            agent.destination=target;agent.path=std::move(path.points);agent.nextPoint=agent.path.size()>1?1:0;agent.pathAge=0.0F;
+        }
+        while(agent.nextPoint<agent.path.size()&&glm::length(agent.path[agent.nextPoint]-actor.position)<0.35F)++agent.nextPoint;
+        if(agent.nextPoint<agent.path.size())steeringTarget=agent.path[agent.nextPoint];
+    }
+    glm::vec3 delta=steeringTarget-actor.position;delta.y=0;if(glm::length(delta)<0.1F)return;glm::vec3 remaining=glm::normalize(delta)*def.movementSpeed*dt;Capsule shape{actor.position,def.height,def.radius};
     for(int iteration=0;iteration<3&&glm::length(remaining)>0.0001F;++iteration){CollisionSweepHit staticHit,dynamicHit;bool hasStatic=collision_&&collision_->sweepCapsule(shape,remaining,staticHit);bool hasDynamic=dynamicCollision_&&dynamicCollision_->sweepCapsule(shape,remaining,dynamicHit,actor.id);CollisionSweepHit hit;if(!hasStatic&&!hasDynamic){actor.position+=remaining;break;}hit=hasStatic&&(!hasDynamic||staticHit.fraction<dynamicHit.fraction)?staticHit:dynamicHit;const float fraction=std::max(0.0F,hit.fraction-0.001F);actor.position+=remaining*fraction;shape.position=actor.position;remaining*=1.0F-fraction;const float into=glm::dot(remaining,hit.normal);if(into<0.0F)remaining-=hit.normal*into;}
 }
 
@@ -283,7 +300,7 @@ void CombatSystem::processDamage(){std::size_t processed=0;while(!damageQueue_.e
 void CombatSystem::updateCombatPickups(const Capsule& playerCapsule){if(gameplay_==nullptr)return;for(GameplayEntity& entity:gameplay_->mutableEntities()){if(entity.authored.type!=GameplayEntityType::Pickup||entity.collected||!entity.active||(entity.authored.pickupType!="weapon"&&entity.authored.pickupType!="ammo"))continue;const glm::vec3 center{entity.authored.authoredWorldTransform*glm::vec4{entity.authored.boxOffset,1}};const AABB bounds{center-entity.authored.boxSize*0.5F,center+entity.authored.boxSize*0.5F};if(!capsuleOverlapsAabb(playerCapsule,bounds))continue;bool collected=false;if(entity.authored.pickupType=="weapon"){const WeaponDefinition* def=weaponDefinition(entity.authored.itemId);if(def){const bool newlyOwned=grantWeapon(def->id,entity.authored.amount);collected=newlyOwned||entity.authored.amount>0;}}else collected=addAmmo(entity.authored.itemId,entity.authored.amount)>0;if(collected){entity.collected=true;entity.active=false;for(std::size_t index:entity.authored.primitiveIndices)if(scene_&&index<scene_->primitives.size())scene_->primitives[index].visible=false;gameplay_->showMessage("Picked up "+entity.authored.displayName,2.5F,2);}}}
 
 AABB CombatSystem::enemyBounds(const EnemyActor& actor) const {const EnemyDefinition* def=enemyDefinition(actor.definitionId);const float radius=def?def->radius:0.4F,height=def?def->height:1.8F;return AABB{actor.position+glm::vec3{-radius,0,-radius},actor.position+glm::vec3{radius,height,radius}};}
-void CombatSystem::synchronizeEnemy(EnemyActor& actor){if(scene_){for(std::size_t index:actor.primitiveIndices)if(index<scene_->primitives.size()){const GameplayEntity* entity=gameplay_?gameplay_->find(actor.id):nullptr;if(entity)scene_->primitives[index].worldTransform=glm::translate(glm::mat4{1},actor.position-actor.spawnPosition)*entity->authored.authoredWorldTransform;scene_->primitives[index].visible=actor.active&&actor.state!=EnemyState::Dead;}}if(dynamicCollision_)dynamicCollision_->upsert(actor.id,enemyBounds(actor),actor.active&&actor.state!=EnemyState::Dead);}
+void CombatSystem::synchronizeEnemy(EnemyActor& actor){if(scene_){const GameplayEntity* entity=gameplay_?gameplay_->find(actor.id):nullptr;const glm::mat4 transform=entity?glm::translate(glm::mat4{1},actor.position-actor.spawnPosition)*entity->authored.authoredWorldTransform:glm::mat4{1};for(std::size_t index:actor.primitiveIndices)if(index<scene_->primitives.size()){scene_->primitives[index].worldTransform=transform;scene_->primitives[index].visible=actor.active&&actor.state!=EnemyState::Dead;}for(std::size_t index:actor.skinnedPrimitiveIndices)if(index<scene_->skinnedPrimitives.size()){scene_->skinnedPrimitives[index].worldTransform=transform;scene_->skinnedPrimitives[index].visible=actor.active||actor.state==EnemyState::Dead;}const char* clip=actor.state==EnemyState::Chasing?"walk":actor.state==EnemyState::Attacking?"attack":actor.state==EnemyState::Pain?"pain":actor.state==EnemyState::Dead?"death":"idle";const bool looping=actor.state==EnemyState::Idle||actor.state==EnemyState::Alert||actor.state==EnemyState::Chasing;scene_->setAnimation(actor.skinnedPrimitiveIndices,clip,looping); }if(dynamicCollision_)dynamicCollision_->upsert(actor.id,enemyBounds(actor),actor.active&&actor.state!=EnemyState::Dead);}
 
 void CombatSystem::updatePresentation(const float dt) noexcept {hitMarkerTimer_=std::max(0.0F,hitMarkerTimer_-dt);killMarkerTimer_=std::max(0.0F,killMarkerTimer_-dt);muzzleFlashTimer_=std::max(0.0F,muzzleFlashTimer_-dt);damageIndicatorTimer_=std::max(0.0F,damageIndicatorTimer_-dt);for(auto&effect:effects_)effect.lifetime-=dt;std::erase_if(effects_,[](const CombatLineEffect&e){return e.lifetime<=0.0F;});}
 const WeaponDefinition* CombatSystem::equippedDefinition() const noexcept {const WeaponInstance*w=equippedWeapon();return w?weaponDefinition(w->definitionId):nullptr;}
@@ -291,6 +308,8 @@ const WeaponInstance* CombatSystem::equippedWeapon() const noexcept {return equi
 int CombatSystem::reserveAmmo() const {const WeaponDefinition*d=equippedDefinition();return d?ammunition_.get(d->ammoType):0;}
 const AmmoInventory& CombatSystem::ammunition() const noexcept{return ammunition_;}const std::vector<EnemyActor>& CombatSystem::enemies()const noexcept{return enemies_;}const std::vector<Projectile>&CombatSystem::projectiles()const noexcept{return projectiles_;}const std::vector<CombatLineEffect>&CombatSystem::effects()const noexcept{return effects_;}const HitResult&CombatSystem::lastTrace()const noexcept{return lastTrace_;}bool CombatSystem::hitMarkerVisible()const noexcept{return hitMarkerTimer_>0;}bool CombatSystem::killMarkerVisible()const noexcept{return killMarkerTimer_>0;}float CombatSystem::muzzleFlashRemaining()const noexcept{return muzzleFlashTimer_;}float CombatSystem::damageIndicatorRemaining()const noexcept{return damageIndicatorTimer_;}glm::vec3 CombatSystem::lastDamageDirection()const noexcept{return lastDamageDirection_;}std::uint64_t CombatSystem::rngSeed()const noexcept{return rng_.seed();}std::uint64_t CombatSystem::rngSequence()const noexcept{return rng_.sequence();}
 std::string CombatSystem::debugSummary()const{const WeaponInstance*w=equippedWeapon();std::ostringstream out;out<<"F7 COMBAT  WEAPON "<<(w?w->definitionId:"NONE")<<"  STATE "<<(w?weaponStateName(w->state):"NONE")<<"  AMMO "<<(w?w->magazine:0)<<'/'<<reserveAmmo()<<"  ENEMIES "<<std::count_if(enemies_.begin(),enemies_.end(),[](const EnemyActor&e){return e.active&&e.state!=EnemyState::Dead;})<<"  PROJECTILES "<<projectiles_.size()<<"  RNG "<<rng_.seed()<<':'<<rng_.sequence();return out.str();}
+std::unordered_set<std::string> CombatSystem::livingGroups()const{std::unordered_set<std::string> groups;for(const EnemyActor&enemy:enemies_)if(enemy.active&&enemy.state!=EnemyState::Dead&&!enemy.group.empty())groups.insert(enemy.group);return groups;}
+void CombatSystem::activateGroup(const std::string_view group){for(EnemyActor&enemy:enemies_)if(enemy.group==group&&enemy.state!=EnemyState::Dead){enemy.active=true;if(GameplayEntity*entity=gameplay_?gameplay_->find(enemy.id):nullptr)entity->active=true;synchronizeEnemy(enemy);}}
 
 CombatSaveState CombatSystem::captureState()const{CombatSaveState state;for(const WeaponInstance&w:weapons_)state.weapons.push_back({w.definitionId,w.magazine});if(const WeaponInstance*w=equippedWeapon())state.equippedWeapon=w->definitionId;state.ammunition=ammunition_.values();for(const EnemyActor&e:enemies_)state.enemies.push_back({e.name,e.health,e.position,e.active});return state;}
 bool CombatSystem::validateState(const CombatSaveState&state,std::string&error)const{std::unordered_map<std::string,bool>owned;for(const SavedWeaponState&w:state.weapons){const WeaponDefinition*d=weaponDefinition(w.id);if(!d||w.magazine<0||w.magazine>d->magazineSize||owned.contains(w.id)){error="invalid saved weapon '"+w.id+"'";return false;}owned[w.id]=true;}if(!state.equippedWeapon.empty()&&!owned.contains(state.equippedWeapon)){error="equipped weapon is not owned";return false;}AmmoInventory ammo=ammunition_;if(!ammo.restore(state.ammunition)){error="invalid saved ammunition";return false;}for(const SavedEnemyState&e:state.enemies){const GameplayEntity*entity=gameplay_?gameplay_->findByName(e.name):nullptr;if(!entity||entity->authored.type!=GameplayEntityType::EnemySpawn||e.health<0||!std::isfinite(e.position.x)||!std::isfinite(e.position.y)||!std::isfinite(e.position.z)){error="invalid saved enemy '"+e.name+"'";return false;}}return true;}

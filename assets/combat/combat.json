@@ -8,6 +8,7 @@
     {
       "id": "pistol",
       "display_name": "9MM PISTOL",
+      "animations": {"equip": "equip", "idle": "idle", "fire": "fire", "reload": "reload", "holster": "holster"},
       "attack_type": "hitscan",
       "damage": 18.0,
       "range": 120.0,
@@ -63,6 +64,8 @@
     {
       "id": "grunt",
       "display_name": "GRUNT",
+      "model": "assets/models/grunt.glb",
+      "animations": {"idle": "idle", "walk": "walk", "attack": "attack", "pain": "pain", "death": "death"},
       "maximum_health": 75,
       "movement_speed": 2.5,
       "sight_distance": 25.0,

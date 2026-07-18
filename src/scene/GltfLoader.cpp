@@ -1,11 +1,9 @@
 #include "scene/GltfLoader.hpp"
 
 #include "rendering/Mesh.hpp"
+#include "rendering/SkinnedMesh.hpp"
 #include "scene/Scene.hpp"
 
-#define TINYGLTF_IMPLEMENTATION
-#define STB_IMAGE_IMPLEMENTATION
-#define STB_IMAGE_WRITE_IMPLEMENTATION
 #include <stb_image.h>
 #include <stb_image_write.h>
 #define TINYGLTF_NO_INCLUDE_STB_IMAGE
@@ -31,6 +29,7 @@
 #include <string>
 #include <string_view>
 #include <type_traits>
+#include <unordered_map>
 #include <vector>
 
 namespace {
@@ -206,6 +205,64 @@ bool readVec2Attribute(const tinygltf::Model& model, const int accessorIndex,
             output[i][component] = readFloatComponent(
                 element + static_cast<std::size_t>(component * view.componentSize()),
                 view.componentType(), view.normalized());
+        }
+    }
+    return true;
+}
+
+bool readVec4Attribute(const tinygltf::Model& model, const int accessorIndex,
+                       const char* usage, std::vector<glm::vec4>& output) {
+    AccessorView view;
+    if (!view.initialize(model, accessorIndex, usage) || view.componentCount() != 4 ||
+        !isSupportedAttributeComponent(view.componentType())) return false;
+    output.resize(view.count());
+    for (std::size_t i = 0; i < view.count(); ++i) {
+        for (int component = 0; component < 4; ++component) {
+            output[i][component] = readFloatComponent(
+                view.element(i) + static_cast<std::size_t>(component * view.componentSize()),
+                view.componentType(), view.normalized());
+        }
+    }
+    return true;
+}
+
+bool readJointAttribute(const tinygltf::Model& model, const int accessorIndex,
+                        std::vector<glm::uvec4>& output) {
+    AccessorView view;
+    if (!view.initialize(model, accessorIndex, "JOINTS_0") || view.componentCount() != 4 ||
+        (view.componentType() != TINYGLTF_COMPONENT_TYPE_UNSIGNED_BYTE &&
+         view.componentType() != TINYGLTF_COMPONENT_TYPE_UNSIGNED_SHORT)) return false;
+    output.resize(view.count());
+    for (std::size_t i = 0; i < view.count(); ++i) {
+        for (int component = 0; component < 4; ++component) {
+            const unsigned char* value = view.element(i) + static_cast<std::size_t>(component * view.componentSize());
+            output[i][component] = view.componentType() == TINYGLTF_COMPONENT_TYPE_UNSIGNED_BYTE
+                ? readUnaligned<std::uint8_t>(value) : readUnaligned<std::uint16_t>(value);
+        }
+    }
+    return true;
+}
+
+bool readScalarFloats(const tinygltf::Model& model, const int accessorIndex,
+                      const char* usage, std::vector<float>& output) {
+    AccessorView view;
+    if (!view.initialize(model, accessorIndex, usage) || view.componentCount() != 1 ||
+        view.componentType() != TINYGLTF_COMPONENT_TYPE_FLOAT) return false;
+    output.resize(view.count());
+    for (std::size_t i = 0; i < view.count(); ++i) output[i] = readUnaligned<float>(view.element(i));
+    return true;
+}
+
+bool readMat4Accessor(const tinygltf::Model& model, const int accessorIndex,
+                      std::vector<glm::mat4>& output) {
+    AccessorView view;
+    if (!view.initialize(model, accessorIndex, "inverse bind matrices") ||
+        view.componentCount() != 16 || view.componentType() != TINYGLTF_COMPONENT_TYPE_FLOAT) return false;
+    output.resize(view.count());
+    for (std::size_t i = 0; i < view.count(); ++i) {
+        for (int component = 0; component < 16; ++component) {
+            output[i][component / 4][component % 4] = readUnaligned<float>(
+                view.element(i) + static_cast<std::size_t>(component * view.componentSize()));
         }
     }
     return true;
@@ -413,6 +470,28 @@ glm::mat4 nodeLocalTransform(const tinygltf::Node& node) {
            glm::scale(glm::mat4{1.0F}, scale);
 }
 
+reflex::animation::Transform nodeTransform(const tinygltf::Node& node) {
+    reflex::animation::Transform transform;
+    if (node.matrix.size() == 16) {
+        const glm::mat4 matrix = nodeLocalTransform(node);
+        transform.translation = glm::vec3{matrix[3]};
+        transform.scale = {glm::length(glm::vec3{matrix[0]}), glm::length(glm::vec3{matrix[1]}),
+                           glm::length(glm::vec3{matrix[2]})};
+        glm::mat3 rotation{1.0F};
+        for (int column = 0; column < 3; ++column) {
+            if (transform.scale[column] > 0.000001F) rotation[column] = glm::vec3{matrix[column]} / transform.scale[column];
+        }
+        transform.rotation = glm::normalize(glm::quat_cast(rotation));
+        return transform;
+    }
+    if (node.translation.size() == 3) transform.translation = {static_cast<float>(node.translation[0]), static_cast<float>(node.translation[1]), static_cast<float>(node.translation[2])};
+    if (node.rotation.size() == 4) transform.rotation = glm::normalize(glm::quat{
+        static_cast<float>(node.rotation[3]), static_cast<float>(node.rotation[0]),
+        static_cast<float>(node.rotation[1]), static_cast<float>(node.rotation[2])});
+    if (node.scale.size() == 3) transform.scale = {static_cast<float>(node.scale[0]), static_cast<float>(node.scale[1]), static_cast<float>(node.scale[2])};
+    return transform;
+}
+
 bool nodeCollisionEnabled(const tinygltf::Node& node) {
     if (node.name.rfind("nocollide_", 0) == 0) {
         return false;
@@ -511,7 +590,8 @@ GameplayEventType eventType(const std::string& name, const GameplayEventType fal
 
 std::optional<GameplayEntityDefinition> gameplayDefinition(
     const tinygltf::Node& node, const glm::mat4& worldTransform,
-    std::vector<std::size_t> primitiveIndices) {
+    std::vector<std::size_t> primitiveIndices,
+    std::vector<std::size_t> skinnedPrimitiveIndices) {
     const std::optional<GameplayEntityType> type = gameplayType(node);
     if (!type) return std::nullopt;
     GameplayEntityDefinition definition;
@@ -531,6 +611,7 @@ std::optional<GameplayEntityDefinition> gameplayDefinition(
     }
     definition.authoredWorldTransform = worldTransform;
     definition.primitiveIndices = std::move(primitiveIndices);
+    definition.skinnedPrimitiveIndices = std::move(skinnedPrimitiveIndices);
     definition.targetName = extraString(node, "target_name");
     definition.boxOffset = extraVec3(node, "collider_offset", glm::vec3{0.0F});
     const glm::vec3 colliderSize = extraVec3(node, "collider_size", glm::vec3{1.0F});
@@ -561,6 +642,7 @@ std::optional<GameplayEntityDefinition> gameplayDefinition(
     definition.restoreArmor = static_cast<int>(extraFloat(node, "restore_armor", 0.0F));
     definition.enemyType = extraString(node, "enemy_type");
     definition.startsActive = extraBool(node, "starts_active", true);
+    definition.group = extraString(node, "group", {});
 
     if (glm::any(glm::lessThanEqual(definition.boxSize, glm::vec3{0.0F}))) {
         std::cerr << "Warning: entity '" << definition.name
@@ -675,11 +757,14 @@ bool GltfLoader::loadGlb(const std::filesystem::path& path, Scene& scene) const 
 
     LoadStatistics statistics;
     std::vector<std::vector<std::optional<std::size_t>>> meshPrimitiveMap(model.meshes.size());
+    std::vector<std::vector<std::optional<std::size_t>>> skinnedPrimitiveMap(model.meshes.size());
     std::vector<std::vector<std::optional<CpuPrimitive>>> cpuPrimitiveMap(model.meshes.size());
     for (std::size_t meshIndex = 0; meshIndex < model.meshes.size(); ++meshIndex) {
         const tinygltf::Mesh& sourceMesh = model.meshes[meshIndex];
         auto& primitiveMap = meshPrimitiveMap[meshIndex];
         primitiveMap.resize(sourceMesh.primitives.size());
+        auto& skinnedMap = skinnedPrimitiveMap[meshIndex];
+        skinnedMap.resize(sourceMesh.primitives.size());
         auto& cpuPrimitives = cpuPrimitiveMap[meshIndex];
         cpuPrimitives.resize(sourceMesh.primitives.size());
 
@@ -767,10 +852,144 @@ bool GltfLoader::loadGlb(const std::filesystem::path& path, Scene& scene) const 
             primitiveMap[primitiveIndex] = newScene.meshes.size();
             cpuPrimitives[primitiveIndex] = CpuPrimitive{positions, indices};
             newScene.meshes.push_back(std::move(mesh));
+
+            const auto jointAttribute = primitive.attributes.find("JOINTS_0");
+            const auto weightAttribute = primitive.attributes.find("WEIGHTS_0");
+            if (jointAttribute != primitive.attributes.end() || weightAttribute != primitive.attributes.end()) {
+                std::vector<glm::uvec4> joints;
+                std::vector<glm::vec4> weights;
+                if (jointAttribute == primitive.attributes.end() || weightAttribute == primitive.attributes.end() ||
+                    !readJointAttribute(model, jointAttribute->second, joints) ||
+                    !readVec4Attribute(model, weightAttribute->second, "WEIGHTS_0", weights) ||
+                    joints.size() != vertices.size() || weights.size() != vertices.size()) {
+                    std::cerr << "Warning: malformed JOINTS_0/WEIGHTS_0 pair; rendering primitive statically.\n";
+                } else {
+                    std::vector<SkinnedVertex> skinnedVertices(vertices.size());
+                    for (std::size_t i = 0; i < vertices.size(); ++i) {
+                        float weightSum = weights[i].x + weights[i].y + weights[i].z + weights[i].w;
+                        if (!std::isfinite(weightSum) || weightSum <= 0.000001F) {
+                            weights[i] = {1.0F, 0.0F, 0.0F, 0.0F}; joints[i] = {};
+                        } else weights[i] /= weightSum;
+                        skinnedVertices[i] = {vertices[i].position, vertices[i].normal,
+                                              vertices[i].texCoord, joints[i], weights[i]};
+                    }
+                    SkinnedMesh skinnedMesh;
+                    if (!skinnedMesh.upload(skinnedVertices, indices)) return false;
+                    skinnedMap[primitiveIndex] = newScene.skinnedMeshes.size();
+                    newScene.skinnedMeshes.push_back(std::move(skinnedMesh));
+                }
+            }
             ++statistics.primitives;
             statistics.vertices += vertices.size();
             statistics.indices += indices.size();
         }
+    }
+
+    constexpr std::size_t maximumGpuJoints = 128;
+    std::vector<std::optional<std::size_t>> skinAssetMap(model.skins.size());
+    std::vector<int> nodeParents(model.nodes.size(), -1);
+    for (std::size_t parent = 0; parent < model.nodes.size(); ++parent) {
+        for (const int child : model.nodes[parent].children) {
+            if (child >= 0 && static_cast<std::size_t>(child) < nodeParents.size())
+                nodeParents[static_cast<std::size_t>(child)] = static_cast<int>(parent);
+        }
+    }
+    for (std::size_t skinIndex = 0; skinIndex < model.skins.size(); ++skinIndex) {
+        const tinygltf::Skin& sourceSkin = model.skins[skinIndex];
+        if (sourceSkin.joints.empty() || sourceSkin.joints.size() > maximumGpuJoints) {
+            std::cerr << "Warning: skin " << skinIndex << " has an unsupported joint count (limit "
+                      << maximumGpuJoints << ").\n";
+            continue;
+        }
+        SkeletalAsset asset;
+        asset.skeleton.joints.resize(sourceSkin.joints.size());
+        std::unordered_map<int, std::size_t> jointForNode;
+        for (std::size_t joint = 0; joint < sourceSkin.joints.size(); ++joint) {
+            const int nodeIndex = sourceSkin.joints[joint];
+            if (nodeIndex < 0 || static_cast<std::size_t>(nodeIndex) >= model.nodes.size() ||
+                !jointForNode.emplace(nodeIndex, joint).second) {
+                std::cerr << "Warning: skin " << skinIndex << " has invalid joint-node mappings.\n";
+                asset.skeleton.joints.clear(); break;
+            }
+            const tinygltf::Node& node = model.nodes[static_cast<std::size_t>(nodeIndex)];
+            asset.skeleton.joints[joint].name = node.name.empty() ? "joint_" + std::to_string(joint) : node.name;
+            asset.skeleton.joints[joint].gltfNode = nodeIndex;
+            asset.skeleton.joints[joint].bindLocal = nodeTransform(node);
+        }
+        if (asset.skeleton.joints.empty()) continue;
+        for (std::size_t joint = 0; joint < sourceSkin.joints.size(); ++joint) {
+            int parentNode = nodeParents[static_cast<std::size_t>(sourceSkin.joints[joint])];
+            while (parentNode >= 0 && !jointForNode.contains(parentNode))
+                parentNode = nodeParents[static_cast<std::size_t>(parentNode)];
+            if (parentNode >= 0) asset.skeleton.joints[joint].parent =
+                static_cast<int>(jointForNode.at(parentNode));
+        }
+        if (sourceSkin.inverseBindMatrices >= 0) {
+            std::vector<glm::mat4> inverseBinds;
+            if (!readMat4Accessor(model, sourceSkin.inverseBindMatrices, inverseBinds) ||
+                inverseBinds.size() != asset.skeleton.joints.size()) {
+                std::cerr << "Warning: skin " << skinIndex << " has malformed inverse bind matrices.\n";
+                continue;
+            }
+            for (std::size_t joint = 0; joint < inverseBinds.size(); ++joint)
+                asset.skeleton.joints[joint].inverseBind = inverseBinds[joint];
+        }
+        std::string skeletonError;
+        if (!asset.skeleton.validate(skeletonError, maximumGpuJoints)) {
+            std::cerr << "Warning: rejected skin " << skinIndex << ": " << skeletonError << '\n';
+            continue;
+        }
+        for (std::size_t animationIndex = 0; animationIndex < model.animations.size(); ++animationIndex) {
+            const tinygltf::Animation& sourceAnimation = model.animations[animationIndex];
+            reflex::animation::AnimationClip clip;
+            clip.name = sourceAnimation.name.empty() ? "animation_" + std::to_string(animationIndex)
+                                                     : sourceAnimation.name;
+            clip.joints.resize(asset.skeleton.joints.size());
+            for (const tinygltf::AnimationChannel& channel : sourceAnimation.channels) {
+                if (channel.target_node < 0 || !jointForNode.contains(channel.target_node) ||
+                    channel.sampler < 0 || static_cast<std::size_t>(channel.sampler) >= sourceAnimation.samplers.size()) continue;
+                const tinygltf::AnimationSampler& sampler = sourceAnimation.samplers[static_cast<std::size_t>(channel.sampler)];
+                std::vector<float> times;
+                if (!readScalarFloats(model, sampler.input, "animation timestamps", times) || times.empty()) continue;
+                clip.duration = std::max(clip.duration, times.back());
+                reflex::animation::Interpolation interpolation = reflex::animation::Interpolation::Linear;
+                if (sampler.interpolation == "STEP") interpolation = reflex::animation::Interpolation::Step;
+                else if (sampler.interpolation == "CUBICSPLINE") interpolation = reflex::animation::Interpolation::CubicSpline;
+                const std::size_t joint = jointForNode.at(channel.target_node);
+                const bool cubic = interpolation == reflex::animation::Interpolation::CubicSpline;
+                if (channel.target_path == "translation" || channel.target_path == "scale") {
+                    std::vector<glm::vec3> imported;
+                    if (!readVec3Attribute(model, sampler.output, channel.target_path.c_str(), imported)) continue;
+                    std::vector<glm::vec3> values;
+                    if (cubic && imported.size() == times.size() * 3) {
+                        values.reserve(times.size());
+                        for (std::size_t i = 0; i < times.size(); ++i) values.push_back(imported[i * 3 + 1]);
+                    } else values = std::move(imported);
+                    if (values.size() != times.size()) continue;
+                    reflex::animation::Track<glm::vec3> track{times, std::move(values),
+                        cubic ? reflex::animation::Interpolation::Linear : interpolation};
+                    if (channel.target_path == "translation") clip.joints[joint].translation = std::move(track);
+                    else clip.joints[joint].scale = std::move(track);
+                } else if (channel.target_path == "rotation") {
+                    std::vector<glm::vec4> imported;
+                    if (!readVec4Attribute(model, sampler.output, "animation rotations", imported)) continue;
+                    std::vector<glm::quat> values;
+                    const std::size_t count = cubic ? imported.size() / 3 : imported.size();
+                    if (count != times.size()) continue;
+                    values.reserve(count);
+                    for (std::size_t i = 0; i < count; ++i) {
+                        const glm::vec4 value = imported[cubic ? i * 3 + 1 : i];
+                        values.push_back(glm::normalize(glm::quat{value.w, value.x, value.y, value.z}));
+                    }
+                    clip.joints[joint].rotation = reflex::animation::Track<glm::quat>{
+                        times, std::move(values), cubic ? reflex::animation::Interpolation::Linear : interpolation};
+                }
+            }
+            std::string clipError;
+            if (clip.duration > 0.0F && clip.validate(clipError)) asset.clips.push_back(std::move(clip));
+        }
+        skinAssetMap[skinIndex] = newScene.skeletalAssets.size();
+        newScene.skeletalAssets.push_back(std::move(asset));
     }
 
     if (model.scenes.empty()) {
@@ -802,6 +1021,7 @@ bool GltfLoader::loadGlb(const std::filesystem::path& path, Scene& scene) const 
         const tinygltf::Node& node = model.nodes[static_cast<std::size_t>(nodeIndex)];
         const glm::mat4 worldTransform = parentTransform * nodeLocalTransform(node);
         std::vector<std::size_t> nodePrimitiveIndices;
+        std::vector<std::size_t> nodeSkinnedPrimitiveIndices;
 
         if (isPlayerSpawn(node) && !newScene.hasPlayerSpawn) {
             newScene.playerSpawnPosition = glm::vec3{worldTransform[3]};
@@ -817,12 +1037,27 @@ bool GltfLoader::loadGlb(const std::filesystem::path& path, Scene& scene) const 
 
         if (node.mesh >= 0 && static_cast<std::size_t>(node.mesh) < meshPrimitiveMap.size()) {
             const auto& primitiveMap = meshPrimitiveMap[static_cast<std::size_t>(node.mesh)];
+            const auto& skinnedMap = skinnedPrimitiveMap[static_cast<std::size_t>(node.mesh)];
             const auto& sourcePrimitives = model.meshes[static_cast<std::size_t>(node.mesh)].primitives;
             for (std::size_t i = 0; i < primitiveMap.size(); ++i) {
                 if (primitiveMap[i].has_value()) {
-                    nodePrimitiveIndices.push_back(newScene.primitives.size());
-                    newScene.primitives.push_back(ScenePrimitive{
-                        *primitiveMap[i], sourcePrimitives[i].material, worldTransform});
+                    const bool hasSkin = node.skin >= 0 &&
+                        static_cast<std::size_t>(node.skin) < skinAssetMap.size() &&
+                        skinAssetMap[static_cast<std::size_t>(node.skin)].has_value() &&
+                        i < skinnedMap.size() && skinnedMap[i].has_value();
+                    if (hasSkin) {
+                        nodeSkinnedPrimitiveIndices.push_back(newScene.skinnedPrimitives.size());
+                        SkinnedScenePrimitive skinnedPrimitive;
+                        skinnedPrimitive.mesh = *skinnedMap[i];
+                        skinnedPrimitive.material = sourcePrimitives[i].material;
+                        skinnedPrimitive.skeleton = *skinAssetMap[static_cast<std::size_t>(node.skin)];
+                        skinnedPrimitive.worldTransform = worldTransform;
+                        newScene.skinnedPrimitives.push_back(std::move(skinnedPrimitive));
+                    } else {
+                        nodePrimitiveIndices.push_back(newScene.primitives.size());
+                        newScene.primitives.push_back(ScenePrimitive{
+                            *primitiveMap[i], sourcePrimitives[i].material, worldTransform});
+                    }
                 }
                 if (nodeCollisionEnabled(node) && cpuPrimitiveMap[static_cast<std::size_t>(node.mesh)][i]) {
                     const CpuPrimitive& cpu =
@@ -852,7 +1087,8 @@ bool GltfLoader::loadGlb(const std::filesystem::path& path, Scene& scene) const 
         }
 
         if (auto definition = gameplayDefinition(node, worldTransform,
-                                                  std::move(nodePrimitiveIndices))) {
+                                                  std::move(nodePrimitiveIndices),
+                                                  std::move(nodeSkinnedPrimitiveIndices))) {
             newScene.gameplayEntities.push_back(std::move(*definition));
         }
 
@@ -886,6 +1122,8 @@ bool GltfLoader::loadGlb(const std::filesystem::path& path, Scene& scene) const 
         std::cerr << "Warning: no player_spawn node; using fallback (0, 1, 5).\n";
     }
 
+    newScene.updateAnimations(0.0F);
+
     scene = std::move(newScene);
     std::cout << "Loaded scene:       " << path << '\n'
               << "  nodes:            " << model.nodes.size() << '\n'
@@ -895,6 +1133,10 @@ bool GltfLoader::loadGlb(const std::filesystem::path& path, Scene& scene) const 
               << "  textures:         " << model.textures.size() << '\n'
               << "  uploaded vertices: " << statistics.vertices << '\n'
               << "  uploaded indices: " << statistics.indices << '\n';
+    std::cout << "  skins/animations:" << scene.skeletalAssets.size() << '/';
+    std::size_t animationCount = 0;
+    for (const SkeletalAsset& asset : scene.skeletalAssets) animationCount += asset.clips.size();
+    std::cout << animationCount << '\n';
     std::cout << "  gameplay metadata:" << scene.gameplayEntities.size() << '\n';
     std::cout << "  player spawn:     (" << scene.playerSpawnPosition.x << ", "
               << scene.playerSpawnPosition.y << ", " << scene.playerSpawnPosition.z

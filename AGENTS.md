@@ -6,11 +6,12 @@ Reflex Engine is a small C++20, cross-platform 3D engine for first-person
 shooters inspired by the 1999-2004 era. Linux is the primary development target,
 but changes should remain portable to Windows.
 
-The current implementation is Phase 5: an SDL3/OpenGL 3.3 Core platform shell
+The current implementation is Phase 6: an SDL3/OpenGL 3.3 Core platform shell
 that renders static Blender-exported `.glb` environments and provides a
 collision-aware kinematic FPS controller, typed interactive-world layer, JSON
-quick save/load, and fixed-step combat with weapons, projectiles, and simple
-enemy actors. Preserve this working behavior when extending the engine.
+quick save/load, fixed-step combat, four-weight skeletal animation, Recast/Detour
+navigation, campaign definitions, miniaudio playback, asset validation, and
+runtime profiling. Preserve this working behavior when extending the engine.
 
 ## Build and validation
 
@@ -65,6 +66,11 @@ compiler warnings.
 - `CombatSystem` owns validated weapon/enemy definitions, player weapon state,
   named ammunition, enemies, projectiles, deterministic RNG, queued damage, and
   bounded transient combat effects.
+- `NavigationSystem` owns Recast-generated data and Detour queries; collision
+  remains authoritative for agent movement.
+- `AudioSystem` owns miniaudio, sound definitions, and active voices.
+- Phase 6 animation data is engine-owned after glTF import; `Scene` owns reusable
+  poses and skin matrices while `Renderer` owns the GPU skinning shader.
 - `HudRenderer` owns the code-defined 5x7 screen-space text renderer.
 - `Shader`, `Mesh`, and `Texture` are move-only RAII wrappers for OpenGL objects.
 - `Scene` owns GPU scene resources, draw instances, collision data, and spawn data.
@@ -97,13 +103,14 @@ render interfaces, or other speculative abstractions.
 - Broken texture images should use the generated checkerboard fallback rather
   than crash the application.
 
-Runtime shaders live in `assets/shaders/`. The default scene is
-`assets/levels/test_scene.glb`. The build copies `assets/` beside the executable.
-Combat definitions live in `assets/combat/combat.json`. Regenerate the Phase 5
+Runtime shaders live in `assets/shaders/`. The default level is
+`assets/campaign/level01.json`. The build copies `assets/` beside the executable.
+Combat definitions live in `assets/combat/combat.json`. Regenerate the Phase 6
 combat/interaction/collision course with:
 
 ```bash
 python3 tools/generate_test_scene.py
+python3 tools/generate_phase6_assets.py
 ```
 
 Do not add third-party assets without clear licensing.
@@ -119,8 +126,8 @@ implementation macros in headers.
 
 ## Scope boundary
 
-Phase 5 stops at the first combat milestone. Do not add advanced AI, campaign,
-animation, networking, or general physics features unless explicitly requested.
+Phase 6 stops at animated campaign support. Do not add networking, editor,
+arbitrary scripting, advanced cinematics, or general physics unless explicitly requested.
 Out-of-scope systems currently include:
 
 - moving platforms/elevators and rigid-body physics;

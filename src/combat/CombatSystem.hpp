@@ -2,6 +2,7 @@
 
 #include "combat/CombatTypes.hpp"
 #include "collision/DynamicCollisionWorld.hpp"
+#include "navigation/NavigationSystem.hpp"
 
 #include <glm/mat4x4.hpp>
 
@@ -9,6 +10,7 @@
 #include <filesystem>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 class CollisionWorld;
@@ -37,7 +39,8 @@ public:
     [[nodiscard]] bool initialize(const std::filesystem::path& definitionPath,
                                   Scene& scene, GameplayWorld& gameplay,
                                   const CollisionWorld& collision,
-                                  DynamicCollisionWorld& dynamicCollision);
+                                  DynamicCollisionWorld& dynamicCollision,
+                                  reflex::navigation::NavigationSystem* navigation = nullptr);
     void reset();
     void fixedUpdate(float deltaTime, const CombatInput& input,
                      const glm::vec3& cameraPosition, const glm::vec3& cameraForward,
@@ -66,6 +69,8 @@ public:
     [[nodiscard]] std::string debugSummary() const;
     [[nodiscard]] std::uint64_t rngSeed() const noexcept;
     [[nodiscard]] std::uint64_t rngSequence() const noexcept;
+    [[nodiscard]] std::unordered_set<std::string> livingGroups() const;
+    void activateGroup(std::string_view group);
 
     [[nodiscard]] CombatSaveState captureState() const;
     [[nodiscard]] bool validateState(const CombatSaveState& state, std::string& error) const;
@@ -99,6 +104,7 @@ private:
     GameplayWorld* gameplay_{nullptr};
     const CollisionWorld* collision_{nullptr};
     DynamicCollisionWorld* dynamicCollision_{nullptr};
+    reflex::navigation::NavigationSystem* navigation_{nullptr};
     CombatDefinitions definitions_;
     std::unordered_map<std::string, std::size_t> weaponDefinitions_;
     std::unordered_map<std::string, std::size_t> enemyDefinitions_;
@@ -107,6 +113,7 @@ private:
     int equippedIndex_{-1};
     std::vector<EnemyActor> enemies_;
     std::unordered_map<EntityId, std::size_t> enemiesById_;
+    std::unordered_map<EntityId, reflex::navigation::NavigationAgentState> navigationAgents_;
     std::vector<Projectile> projectiles_;
     std::deque<DamageEvent> damageQueue_;
     std::vector<CombatLineEffect> effects_;

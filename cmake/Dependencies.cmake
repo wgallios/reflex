@@ -62,9 +62,29 @@ FetchContent_Declare(
     GIT_PROGRESS TRUE
 )
 
+FetchContent_Declare(
+    recastnavigation
+    GIT_REPOSITORY https://github.com/recastnavigation/recastnavigation.git
+    GIT_TAG 6dc1667f580357e8a2154c28b7867bea7e8ad3a7 # v1.6.0
+    GIT_SHALLOW TRUE
+    GIT_PROGRESS TRUE
+)
+
+set(RECASTNAVIGATION_DEMO OFF CACHE BOOL "Do not build RecastDemo" FORCE)
+set(RECASTNAVIGATION_TESTS OFF CACHE BOOL "Do not build Recast tests" FORCE)
+set(RECASTNAVIGATION_EXAMPLES OFF CACHE BOOL "Do not build Recast examples" FORCE)
+
+FetchContent_Declare(
+    miniaudio
+    GIT_REPOSITORY https://github.com/mackron/miniaudio.git
+    GIT_TAG 9634bedb5b5a2ca38c1ee7108a9358a4e233f14d # 0.11.25
+    GIT_SHALLOW TRUE
+    GIT_PROGRESS TRUE
+)
+
 set(JSON_BuildTests OFF CACHE BOOL "Do not build nlohmann/json tests" FORCE)
 set(JSON_Install OFF CACHE BOOL "Do not install nlohmann/json" FORCE)
-FetchContent_MakeAvailable(SDL3 glad glm tinygltf stb nlohmann_json)
+FetchContent_MakeAvailable(SDL3 glad glm tinygltf stb nlohmann_json recastnavigation miniaudio)
 
 # Generate only the OpenGL API this phase uses. REPRODUCIBLE makes GLAD use its
 # bundled Khronos specification snapshot instead of downloading one at configure time.

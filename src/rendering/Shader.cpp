@@ -127,6 +127,14 @@ void Shader::setFloat(const std::string_view name, const float value) const {
     glUniform1f(uniformLocation(name), value);
 }
 
+void Shader::setMat4Array(const std::string_view name,
+                          const std::span<const glm::mat4> values) const {
+    if (!values.empty()) {
+        glUniformMatrix4fv(uniformLocation(name), static_cast<GLsizei>(values.size()),
+                           GL_FALSE, glm::value_ptr(values.front()));
+    }
+}
+
 void Shader::reset() noexcept {
     if (program_ != 0) {
         glDeleteProgram(program_);

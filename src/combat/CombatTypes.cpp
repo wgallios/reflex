@@ -16,6 +16,12 @@ using json = nlohmann::json;
 
 bool finitePositive(const float value) { return std::isfinite(value) && value > 0.0F; }
 
+void parseAnimationMap(const json& value, std::unordered_map<std::string, std::string>& output) {
+    if (!value.contains("animations") || !value["animations"].is_object()) return;
+    for (const auto& [state, clip] : value["animations"].items())
+        if (clip.is_string() && !clip.get_ref<const std::string&>().empty()) output.emplace(state, clip.get<std::string>());
+}
+
 std::optional<WeaponDefinition> parseWeapon(const json& value, std::string& error) {
     if (!value.is_object()) { error = "weapon entry is not an object"; return std::nullopt; }
     WeaponDefinition result;
@@ -40,6 +46,8 @@ std::optional<WeaponDefinition> parseWeapon(const json& value, std::string& erro
     result.splashRadius = value.value("splash_radius", 0.0F);
     result.selfDamage = value.value("self_damage", false);
     result.tracerFrequency = std::max(1, value.value("tracer_frequency", 1));
+    result.viewmodel = value.value("viewmodel", std::string{});
+    parseAnimationMap(value, result.animations);
     if (result.id.empty() || result.ammoType.empty() || !finitePositive(result.damage) ||
         !finitePositive(result.shotsPerSecond) || result.magazineSize <= 0 ||
         !finitePositive(result.reloadTime) || result.pellets <= 0 ||
@@ -69,10 +77,17 @@ std::optional<EnemyDefinition> parseEnemy(const json& value, std::string& error)
     result.attackSpreadDegrees = value.value("attack_spread_degrees", 4.0F);
     result.painDuration = value.value("pain_duration", 0.2F);
     result.radius = value.value("radius", 0.4F); result.height = value.value("height", 1.8F);
+    result.model = value.value("model", std::string{});
+    parseAnimationMap(value, result.animations);
+    result.modelScale = value.value("model_scale", 1.0F);
+    result.forwardAxisCorrectionDegrees = value.value("forward_axis_correction_degrees", 0.0F);
+    if (value.contains("model_offset") && value["model_offset"].is_array() && value["model_offset"].size() == 3)
+        result.modelOffset = {value["model_offset"][0].get<float>(), value["model_offset"][1].get<float>(), value["model_offset"][2].get<float>()};
     if (result.id.empty() || result.maximumHealth <= 0 || !finitePositive(result.movementSpeed) ||
         !finitePositive(result.sightDistance) || result.fieldOfViewDegrees <= 0.0F ||
         result.fieldOfViewDegrees >= 180.0F || !finitePositive(result.attackRange) ||
-        !finitePositive(result.shotsPerSecond) || result.height <= result.radius * 2.0F) {
+        !finitePositive(result.shotsPerSecond) || result.height <= result.radius * 2.0F ||
+        !finitePositive(result.modelScale) || !std::isfinite(result.forwardAxisCorrectionDegrees)) {
         error = "enemy '" + result.id + "' has invalid required values";
         return std::nullopt;
     }

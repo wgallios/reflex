@@ -6,6 +6,7 @@
 #include <cmath>
 #include <fstream>
 #include <limits>
+#include <utility>
 
 namespace {
 using json = nlohmann::json;
@@ -45,7 +46,10 @@ bool parseVector(const json& value, glm::vec3& output) {
 
 SaveGameData SaveGame::capture(const std::string& levelPath, const GameplayWorld& gameplay,
                                const glm::vec3& playerPosition, const float yaw,
-                               const float pitch, const CombatSystem* combat) {
+                               const float pitch, const CombatSystem* combat,
+                               const reflex::campaign::ObjectiveSystem* objectives,
+                               const reflex::campaign::EncounterSystem* encounters,
+                               std::string campaignLevelId) {
     SaveGameData data;
     data.levelPath = levelPath;
     data.playerPosition = playerPosition;
@@ -61,6 +65,9 @@ SaveGameData SaveGame::capture(const std::string& levelPath, const GameplayWorld
             entity.locked, entity.doorState, entity.doorProgress});
     }
     if (combat != nullptr) data.combat = combat->captureState();
+    data.campaignLevelId = std::move(campaignLevelId);
+    if (objectives != nullptr) data.objectives = objectives->states();
+    if (encounters != nullptr) data.encounters = encounters->states();
     return data;
 }
 
@@ -85,6 +92,17 @@ bool SaveGame::write(const std::filesystem::path& path, const SaveGameData& data
             {"door_progress", state.doorProgress}};
     }
     root["combat"] = json::object();
+    root["campaign_level_id"] = data.campaignLevelId;
+    root["objectives"] = json::object();
+    for (const auto& [id, progress] : data.objectives) {
+        root["objectives"][id] = {{"state", static_cast<int>(progress.state)}, {"count", progress.count}};
+    }
+    root["encounters"] = json::object();
+    for (const auto& [id, runtime] : data.encounters) {
+        root["encounters"][id] = {{"state", static_cast<int>(runtime.state)},
+            {"wave", runtime.wave}, {"timer", runtime.timer},
+            {"completion_delivered", runtime.completionDelivered}};
+    }
     root["combat"]["equipped_weapon"] = data.combat.equippedWeapon;
     root["combat"]["weapons"] = json::array();
     for (const SavedWeaponState& weapon : data.combat.weapons) {
@@ -134,6 +152,7 @@ std::optional<SaveGameData> SaveGame::read(const std::filesystem::path& path,
             error = "save is missing required level or player data"; return std::nullopt;
         }
         data.levelPath = root["level"].get<std::string>();
+        data.campaignLevelId = root.value("campaign_level_id", std::string{});
         const json& player = root["player"];
         if (!player.contains("position") || !parseVector(player["position"], data.playerPosition)) {
             error = "save has an invalid player position"; return std::nullopt;
@@ -211,6 +230,33 @@ std::optional<SaveGameData> SaveGame::read(const std::filesystem::path& path,
                 }
             }
         }
+        if (root.contains("objectives")) {
+            if (!root["objectives"].is_object()) { error = "save objectives are invalid"; return std::nullopt; }
+            for (const auto& [id, value] : root["objectives"].items()) {
+                const int state = value.value("state", 0);
+                const int count = value.value("count", 0);
+                if (!value.is_object() || state < 0 || state > 3 || count < 0) {
+                    error = "save contains invalid objective state"; return std::nullopt;
+                }
+                data.objectives.emplace(id, reflex::campaign::ObjectiveProgress{
+                    static_cast<reflex::campaign::ObjectiveState>(state), count});
+            }
+        }
+        if (root.contains("encounters")) {
+            if (!root["encounters"].is_object()) { error = "save encounters are invalid"; return std::nullopt; }
+            for (const auto& [id, value] : root["encounters"].items()) {
+                const int state = value.value("state", 0);
+                if (!value.is_object() || state < 0 || state > 5) {
+                    error = "save contains invalid encounter state"; return std::nullopt;
+                }
+                reflex::campaign::EncounterRuntime runtime;
+                runtime.state = static_cast<reflex::campaign::EncounterState>(state);
+                runtime.wave = value.value("wave", std::size_t{0});
+                runtime.timer = std::max(0.0F, value.value("timer", 0.0F));
+                runtime.completionDelivered = value.value("completion_delivered", false);
+                data.encounters.emplace(id, runtime);
+            }
+        }
     } catch (const json::exception& exception) {
         error = std::string{"invalid save value: "} + exception.what(); return std::nullopt;
     }
@@ -218,7 +264,8 @@ std::optional<SaveGameData> SaveGame::read(const std::filesystem::path& path,
 }
 
 bool SaveGame::apply(const SaveGameData& data, GameplayWorld& gameplay, std::string& error,
-                     CombatSystem* combat) {
+                     CombatSystem* combat, reflex::campaign::ObjectiveSystem* objectives,
+                     reflex::campaign::EncounterSystem* encounters) {
     if (data.formatVersion != SaveGameData::currentFormatVersion) {
         error = "unsupported save format version"; return false;
     }
@@ -243,5 +290,7 @@ bool SaveGame::apply(const SaveGameData& data, GameplayWorld& gameplay, std::str
     gameplay.clearPendingEvents();
     gameplay.synchronizePersistentState();
     if (combat != nullptr && !combat->restoreState(data.combat, error)) return false;
+    if (objectives != nullptr && !objectives->restore(data.objectives, error)) return false;
+    if (encounters != nullptr && !encounters->restore(data.encounters, error)) return false;
     return true;
 }

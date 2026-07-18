@@ -117,11 +117,25 @@ int main() {
 
     const std::filesystem::path savePath =
         std::filesystem::temp_directory_path() / "reflex_engine_gameplay_test.json";
-    SaveGameData captured = SaveGame::capture("test.glb", world, {1.0F,2.0F,3.0F}, 20.0F, -5.0F);
     std::string error;
+    reflex::campaign::ObjectiveSystem objectives;
+    check(objectives.initialize({{"campaign_goal", reflex::campaign::ObjectiveType::ReachLocation,
+        "Reach the goal", "goal", 1, true, {}}}, error), "save objective fixture initializes");
+    reflex::campaign::EncounterDefinition encounterDefinition;
+    encounterDefinition.id = "saved_encounter";
+    encounterDefinition.waves = {{0.0F, {"saved_wave"}}};
+    reflex::campaign::EncounterSystem encounters;
+    check(encounters.initialize({encounterDefinition}, error) && encounters.start("saved_encounter"),
+          "save encounter fixture initializes");
+    SaveGameData captured = SaveGame::capture("test.glb", world, {1.0F,2.0F,3.0F}, 20.0F, -5.0F,
+        nullptr, &objectives, &encounters, "facility_test");
     check(SaveGame::write(savePath, captured, error), "save serialization succeeds");
     const auto loaded = SaveGame::read(savePath, error);
-    check(loaded.has_value() && loaded->levelPath == "test.glb", "save deserialization succeeds");
+    check(loaded.has_value() && loaded->levelPath == "test.glb" &&
+          loaded->campaignLevelId == "facility_test" &&
+          loaded->objectives.contains("campaign_goal") &&
+          loaded->encounters.contains("saved_encounter"),
+          "campaign save deserialization succeeds");
     SaveGameData future = captured;
     future.formatVersion = 999;
     check(SaveGame::write(savePath, future, error), "future-version fixture writes");

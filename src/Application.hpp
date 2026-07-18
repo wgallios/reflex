@@ -12,6 +12,10 @@
 #include "scene/Camera.hpp"
 #include "scene/GltfLoader.hpp"
 #include "scene/Scene.hpp"
+#include "navigation/NavigationSystem.hpp"
+#include "campaign/Campaign.hpp"
+#include "audio/AudioSystem.hpp"
+#include "profiling/Profiler.hpp"
 
 #include <filesystem>
 
@@ -34,6 +38,7 @@ private:
     void quickLoad();
     void resetLevel();
     void respawnPlayer();
+    [[nodiscard]] bool transitionToLevel(const std::filesystem::path& definitionPath);
     [[nodiscard]] std::filesystem::path resolveAssetPath(
         const std::filesystem::path& path) const;
 
@@ -42,6 +47,8 @@ private:
     Camera camera_;
     GltfLoader gltfLoader_;
     Scene scene_;
+    Scene enemyVisualScene_;
+    Scene weaponVisualScene_;
     Renderer renderer_;
     DebugDraw debugDraw_;
     HudRenderer hudRenderer_;
@@ -49,13 +56,26 @@ private:
     DynamicCollisionWorld dynamicCollision_;
     GameplayWorld gameplay_;
     CombatSystem combat_;
+    reflex::navigation::NavigationSystem navigation_;
+    reflex::campaign::ObjectiveSystem objectives_;
+    reflex::campaign::EncounterSystem encounters_;
+    reflex::campaign::LevelDefinition levelDefinition_;
+    reflex::audio::AudioSystem audio_;
+    reflex::profiling::Profiler profiler_;
     std::filesystem::path scenePath_;
+    std::filesystem::path pendingLevelDefinition_;
     double simulationAccumulator_{0.0};
     float diagnosticLogAccumulator_{0.0F};
     bool pendingJump_{false};
     bool collisionDiagnosticsVisible_{false};
     bool gameplayDiagnosticsVisible_{false};
     bool combatDiagnosticsVisible_{false};
+    bool performanceOverlayVisible_{false};
+    bool navigationDiagnosticsVisible_{false};
+    bool hasLevelDefinition_{false};
+    bool muzzleFlashWasActive_{false};
+    bool enemyVisualsLoaded_{false};
+    bool weaponVisualLoaded_{false};
     bool pendingFire_{false};
     bool pendingReload_{false};
     int pendingWeaponSlot_{-1};

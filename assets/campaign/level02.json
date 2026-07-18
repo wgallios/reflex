@@ -1,0 +1,42 @@
+{
+  "format_version": 1,
+  "id": "facility_02",
+  "display_name": "Service Tunnels",
+  "scene": "assets/levels/phase6_level02.glb",
+  "navigation": "assets/levels/phase6_level02.nav",
+  "audio_manifest": "assets/audio/audio.json",
+  "music": "campaign_music",
+  "next_level": "",
+  "next_level_definition": "",
+  "objectives": [
+    {
+      "id": "clear_tunnels",
+      "type": "ClearEncounter",
+      "text": "Clear both tunnel security waves.",
+      "target": "tunnel_encounter",
+      "starts_active": true,
+      "next_objective": "campaign_complete"
+    },
+    {
+      "id": "campaign_complete",
+      "type": "ExitLevel",
+      "text": "Reach the extraction point.",
+      "target": "trigger_auto_door"
+    }
+  ],
+  "encounters": [
+    {
+      "id": "tunnel_encounter",
+      "start_trigger": "trigger_auto_door",
+      "lock_doors": ["door_auto"],
+      "waves": [
+        {"delay": 0.0, "activate_groups": ["tunnel_wave_01"]},
+        {"delay": 2.0, "activate_groups": ["tunnel_wave_02"]}
+      ],
+      "completion": {
+        "open_doors": ["door_auto"],
+        "complete_objective": "clear_tunnels"
+      }
+    }
+  ]
+}

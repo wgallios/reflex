@@ -6,6 +6,7 @@
 
 #include <filesystem>
 #include <string_view>
+#include <span>
 
 class Shader {
 public:
@@ -25,6 +26,7 @@ public:
     void setVec3(std::string_view name, const glm::vec3& value) const;
     void setInt(std::string_view name, int value) const;
     void setFloat(std::string_view name, float value) const;
+    void setMat4Array(std::string_view name, std::span<const glm::mat4> values) const;
 
 private:
     void reset() noexcept;

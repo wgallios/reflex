@@ -4,20 +4,19 @@ Reflex Engine is a small C++20, cross-platform 3D game engine for first-person
 shooters inspired by the 1999-2004 era. Linux is the first target; SDL and CMake
 keep the platform shell portable to Windows.
 
-## Phase 5 scope
+## Phase 6 scope
 
-Phase 5 adds the first complete combat loop to the existing renderer, kinematic
-controller, and interactive-world layer. The player can carry and switch between
-a pistol, shotgun, and plasma launcher; collect named ammunition; reload; fire
-finite hitscan traces or swept projectiles; damage simple hostile grunts; take
-combat damage; die, respawn, and persist combat state in the quick-save slot.
-Deterministic spread, fixed-step timing, placeholder presentation, bounded line
-effects, hit feedback, and F7 diagnostics keep the prototype inspectable.
+Phase 6 adds four-weight glTF skeletal animation and GPU skinning, Recast/Detour
+navigation, deterministic animation and encounter state machines, objectives,
+versioned level definitions, miniaudio spatial playback, a versioned asset
+manifest, non-graphical asset validation, and rolling runtime profiling. The
+default launch uses the first definition in the two-level Facility test campaign.
 
-This remains deliberately smaller than an ECS, scripting system, or general
-physics engine. Navigation meshes, skeletal animation, ragdolls, advanced AI,
-audio playback, multiplayer, level transitions, scripting, and an editor are not
-included.
+Gameplay movement remains authoritative: locomotion root translation is ignored,
+and animation drives presentation only. Navigation supplies desired steering;
+the existing kinematic collision remains authoritative. Retargeting, inverse
+kinematics, ragdolls, dynamic navmesh rebuilding, arbitrary scripting,
+multiplayer, and editor tooling remain outside this phase.
 
 ## Dependencies
 
@@ -29,8 +28,10 @@ CMake downloads pinned source dependencies with `FetchContent`:
 - tinygltf 2.9.7 (`v2.9.7`)
 - stb at commit `31c1ad37456438565541f4919958214b6e762fb4`
 - nlohmann/json 3.11.3 (`v3.11.3`) for validated save files
+- Recast Navigation / Detour 1.6.0 (commit `6dc1667f580357e8a2154c28b7867bea7e8ad3a7`)
+- miniaudio 0.11.25 (commit `9634bedb5b5a2ca38c1ee7108a9358a4e233f14d`)
 
-`GltfLoader.cpp` is the only translation unit that defines
+`TinyGltfImplementation.cpp` is the only translation unit that defines
 `TINYGLTF_IMPLEMENTATION`, `STB_IMAGE_IMPLEMENTATION`, and
 `STB_IMAGE_WRITE_IMPLEMENTATION`. The separately pinned stb headers are used by
 that implementation rather than relying on an implicit system copy.
@@ -63,10 +64,10 @@ sudo apt install -y \
 ```
 
 SDL loads many desktop integrations dynamically. Audio, controller, and other
-SDL development packages are optional because Reflex Engine initializes only
-video in this phase. XScreenSaver integration remains disabled, so `libxss-dev`
-is not required. Python and Jinja are used by GLAD generation; Python also runs
-the optional test-scene generator.
+SDL development packages are optional. miniaudio uses an available platform
+backend and Reflex continues silently if no device is available. XScreenSaver
+integration remains disabled, so `libxss-dev` is not required. Python and Jinja
+are used by GLAD generation; Python also runs the generated-content tools.
 
 ## Build and run
 
@@ -79,11 +80,19 @@ ctest --test-dir build --output-on-failure
 ./build/reflex_engine
 ```
 
-The default is `assets/levels/test_scene.glb`. Pass another binary glTF scene as
-the first argument:
+The default is `assets/campaign/level01.json`. Pass another level definition or
+a raw binary glTF scene as the first argument:
 
 ```bash
+./build/reflex_engine assets/campaign/level02.json
 ./build/reflex_engine assets/levels/my_room.glb
+```
+
+Validate bundled content without opening a window:
+
+```bash
+cmake --build build --target validate-assets
+./build/reflex-asset-tool validate-model assets/models/my_character.glb
 ```
 
 Runtime assets are also copied beside the executable after each build, allowing
@@ -110,7 +119,9 @@ Click the window to capture the pointer. While captured:
 - `F5`: write `saves/quicksave.json`
 - `F6`: reset authored level/gameplay state
 - `F7`: toggle combat traces, projectiles, enemy bounds/state, and RNG diagnostics
+- `F8`: toggle navigation diagnostics
 - `F9`: validate and load `saves/quicksave.json`
+- `F10`: toggle the runtime performance overlay
 - `Escape`: release the pointer
 
 In noclip mode, `Space` and `Left Ctrl` move up and down. Switching back to
@@ -126,12 +137,20 @@ input so movement cannot become stuck.
 
 ```text
 assets/
+├── audio/
+│   ├── audio.json
+│   └── generated/*.wav
+├── campaign/
+│   ├── level01.json
+│   └── level02.json
 ├── combat/
 │   └── combat.json
 ├── levels/
-│   └── test_scene.glb
+│   ├── phase6_level01.glb / phase6_level02.glb
+│   └── *.nav
+├── manifest.json
 └── shaders/
-    ├── static_mesh.vert
+    ├── static_mesh.vert / skinned_mesh.vert
     ├── static_mesh.frag
     ├── debug_line.vert / debug_line.frag
     └── hud.vert / hud.frag
@@ -147,7 +166,81 @@ interleaved-attribute, and 8-/16-bit index coverage. Regenerate it with:
 
 ```bash
 python3 tools/generate_test_scene.py
+python3 tools/generate_phase6_assets.py
 ```
+
+## Phase 6 animation, navigation, campaign, and audio
+
+Skinned glTF primitives use `JOINTS_0` and `WEIGHTS_0`, normalized to four
+influences. Each skin has an explicit glTF-node-to-engine-joint map, inverse bind
+matrices, bind-local transforms, and a maximum of 128 joints. The OpenGL 3.3
+vertex shader uses a 128-element uniform matrix array and the formula
+`inverse(meshWorld) * jointWorld * inverseBind`. Translation, rotation, and
+scale channels support STEP and LINEAR interpolation. CUBICSPLINE value samples
+are accepted with a documented linear fallback; tangents are not evaluated.
+Rotation sampling and pose blending use normalized quaternion slerp.
+
+Animation state machines use explicit named states and transitions with bounded
+blend durations. Events are delivered once when playback crosses a timestamp,
+including loop boundaries. Gameplay timing remains configured in weapon/enemy
+definitions; an absent presentation clip therefore cannot duplicate a shot or
+reload. Expected weapon clips are `equip`, `idle`, `fire`, `reload`, and
+`holster`; expected enemy clips are `idle`, `walk`, `attack`, `pain`, and
+`death`. Missing clips fall back to bind pose or the first available clip.
+The generated grunt model is instanced at combat actors and follows their state.
+The generated pistol model is a skeletal-import and asset-validation fixture;
+it is not rendered during normal gameplay because it is deliberately only a
+minimal rigged triangle, not player-facing art.
+
+To export an animated Blender model:
+
+1. Use one armature, keep actions clearly named, and limit vertices to four bone influences.
+2. Apply mesh/object transforms only when safe for the rig and verify the root bone orientation.
+3. Export glTF Binary with skins, animations, materials, normals, UVs, and custom properties.
+4. Leave locomotion root translation neutral; Reflex ignores it because gameplay movement owns position.
+5. Run `./build/reflex-asset-tool validate-model model.glb` before using the model.
+
+Navigation is generated at level load from collision-enabled static triangles
+using Recast and queried with Detour. Defaults are 0.25 m cells, 0.15 m cell
+height, a 1.8 m agent, 0.4 m radius, 0.35 m climb, and a 45-degree slope limit.
+Enemies retain paths, replan after 0.4-0.5 seconds or when targets move, steer to
+straight-path corners, and still use kinematic collision. Closed dynamic doors
+remain authoritative blockers; agents periodically replan instead of rebuilding
+the navmesh. Dynamic navmesh obstacles and general jump/climb links are not yet
+supported. Keep doorways wider than twice the agent radius, stairs below maximum
+climb, and mark non-collision decorative geometry `collision = false`.
+
+Level definitions under `assets/campaign/` name the scene, navigation cache,
+audio manifest, music, objectives, encounters, and next level. Objective types
+are `ReachLocation`, `Interact`, `CollectItem`, `KillEntity`, `ClearEncounter`,
+and `ExitLevel`. Encounters have deterministic waves, group activation, delays,
+door lists, completion objectives, and checkpoints. The generated campaign
+contains two connected definitions; replace its copied Phase 5 scenes with
+authored multi-room Level 1 and Level 2 GLBs for the complete content test.
+
+miniaudio loads WAV and OGG-supported files, provides listener-relative spatial
+sound, distance attenuation, loops, per-sound concurrency limits, master volume,
+and one looping music definition per level. A missing device or sound disables
+only audio. Sound IDs are resolved through `assets/audio/audio.json`; gameplay
+systems do not load files directly.
+
+The versioned `assets/manifest.json` avoids runtime filesystem scanning. The
+CI-safe asset tool supports:
+
+```bash
+reflex-asset-tool validate-level <level.json>
+reflex-asset-tool validate-model <model.glb>
+reflex-asset-tool build-navmesh <level.json> --output <level.nav>
+reflex-asset-tool validate-weapons <combat.json>
+reflex-asset-tool validate-enemies <combat.json>
+reflex-asset-tool validate-audio <audio.json>
+reflex-asset-tool validate-manifest <manifest.json>
+```
+
+Navigation `.nav` files currently contain versioned source/cache metadata;
+Recast polygon data is built at runtime. F10 shows rolling frame, simulation,
+render, animation, navigation-query, enemy, projectile, and audio-voice counts.
+All generated creative content is inventoried in `ASSET_LICENSES.md`.
 
 ## Exporting a Blender environment
 
@@ -330,8 +423,9 @@ The first-person weapon is an original code-generated screen-space placeholder.
 Valid shots produce a short muzzle flash and bounded line tracers; projectiles
 and explosions use bounded line presentation. Flesh hits and kills alter the
 crosshair. Surface-aligned line-cross marks distinguish stone, metal, and flesh
-impacts and share the bounded effect cap. There is no audio system, particle
-sprite system, or textured decal renderer; effects remain generated placeholders.
+impacts and share the bounded effect cap. Phase 6 routes weapon sound IDs through
+miniaudio. There is no particle-sprite or textured-decal renderer; those effects
+remain generated placeholders.
 
 ### Enemies and Blender metadata
 
@@ -341,7 +435,8 @@ inaccurate fixed-rate hitscan attack. Its explicit states are `Idle`, `Alert`,
 `Chasing`, `Attacking`, `Pain`, and `Dead`. Perception requires range, cone, and
 static/dynamic line of sight. Lost targets are pursued briefly. Movement uses a
 three-iteration upright-capsule slide against static geometry, doors, and enemy
-AABBs. It works in open rooms/corridors but cannot route through complex mazes.
+AABBs, with Detour straight-path steering and periodic replanning for multi-room
+layouts. Collision remains authoritative when a path crosses a closed door.
 
 Create an Empty or placeholder mesh in Blender and export custom properties:
 
@@ -616,9 +711,10 @@ pickup's case-sensitive `item_id`.
 ### Save file fails to load
 
 Read the console diagnostic. F9 rejects malformed JSON, any `format_version`
-other than 2, non-finite/invalid player or combat fields, and saves whose recorded level
-path differs from the current level. Delete `saves/quicksave.json` to start a
-fresh slot. Unknown saved entity names are harmless and ignored.
+other than 3 and non-finite/invalid player or campaign fields. A cross-level save
+resolves its campaign level ID, unloads the current level, and then applies stable
+entity/objective/encounter state. Delete `saves/quicksave.json` to start a fresh
+slot. Unknown saved entity names are harmless and ignored.
 
 ### Respawn is embedded or HUD text is absent
 
@@ -669,16 +765,62 @@ discarded by quick load.
 
 Confirm `enemy_type` exists, the spawn faces the intended direction, and
 `starts_active` is true or an Activate event was delivered. Sight needs range,
-horizontal FOV, and both static/dynamic LOS. F7 shows state and facing. Direct
-pursuit only slides locally, so complex corners or mazes require simpler room
-layout; no navmesh exists. Attack cadence uses `shots_per_second` at 120 Hz.
+horizontal FOV, and both static/dynamic LOS. F7 shows state and facing. F8 and
+F10 expose path/query state. Recast must include both spawn and destination;
+doorways narrower than twice the agent radius are eroded away. Collision remains
+authoritative after Detour steering. Attack cadence uses `shots_per_second` at
+120 Hz.
 
 ### Enemy damage or combat effects are missing
 
 Check that the enemy box overlaps the visible placeholder and that no nearer wall
 or door blocks the trace. F7 shows actor health/state and the last traces. Muzzle,
 tracer, projectile, explosion, hit-marker, and viewmodel feedback are generated
-placeholders. There is no audio, textured particle, or persistent decal backend.
+placeholders. Audio IDs come from `assets/audio/audio.json`; missing files or a
+missing device leave combat functional. Textured particles and persistent decals
+are not implemented.
+
+### Model renders but does not animate or deforms incorrectly
+
+Run `reflex-asset-tool validate-model` and verify the primitive contains both
+`JOINTS_0` and `WEIGHTS_0`, its node references a skin, inverse bind matrices are
+valid, and the skeleton stays below 128 joints. A 90-degree offset normally means
+the Blender armature/root transform was exported unexpectedly. Preserve Blender's
+normal Y-up conversion and use an authored model offset rather than changing axes.
+
+### Reload event fires twice or an animation clip is missing
+
+Keep fire/reload authority in the fixed-step weapon state machine and use
+animation events to synchronize presentation/audio. Event timestamps must be
+sorted and inside clip duration. Missing clips warn and fall back to bind pose or
+the first compatible clip without changing gameplay timing.
+
+### Enemy cannot find a path or attempts to cross a closed door
+
+Use collision-enabled floor triangles, keep doorway width above 0.8 m, and keep
+stairs at or below 0.35 m. Check F8 and startup's Recast polygon/build summary.
+Closed doors remain dynamic collision blockers and cause periodic replanning;
+dynamic polygon carving is not supported.
+
+### Encounter, objective, transition, or persistence data is wrong
+
+Run `validate-level` and check stable IDs, wave groups, targets, next-objective
+IDs, next-level IDs, and spawn names. Definitions are parsed before active state
+is mutated. Only keys explicitly intended for campaign use should enter persistent
+cross-level state.
+
+### No audio device or positional sound is inaudible
+
+An unavailable device disables audio without failing the level. Verify the file,
+`spatial`, volume, minimum/maximum distance, listener position, and concurrency
+limit. WAV is the bundled baseline; OGG availability follows the miniaudio decoder
+configuration on the target platform.
+
+### Asset validation or animated-scene performance is poor
+
+Validation exits nonzero for missing files, duplicate IDs, malformed GLB headers,
+invalid joints/channels, or invalid level fields. F10 reports rolling subsystem
+costs and counts. Keep skeletons bounded and path replans staggered.
 
 ### Missing OpenGL packages or unsupported OpenGL version
 
@@ -695,9 +837,9 @@ and applications may use Reflex. The copyright notice and license notice must
 be preserved as required by the license. Consult the root `LICENSE` file for
 the complete terms.
 
-## Recommended Phase 6
+## Recommended Phase 7
 
-A sensible Phase 6 is focused presentation and encounter authoring: a small audio
-layer, licensed sprite/model assets, simple frame animation, surface-authored
-impact effects, and optional authored waypoint navigation. Advanced AI, campaign
-systems, multiplayer, and editor work should remain separately scoped.
+A sensible Phase 7 would serialize Detour polygon data offline, add controlled
+door/drop off-mesh traversal, connect campaign transitions to final Blender
+levels, and add licensed animated character/viewmodel content. Multiplayer,
+arbitrary scripting, advanced cinematics, and editor work remain separate scopes.

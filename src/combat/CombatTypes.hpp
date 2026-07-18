@@ -40,6 +40,8 @@ struct WeaponDefinition {
     float splashRadius{0.0F};
     bool selfDamage{false};
     int tracerFrequency{1};
+    std::filesystem::path viewmodel;
+    std::unordered_map<std::string, std::string> animations;
 };
 
 struct EnemyDefinition {
@@ -58,6 +60,11 @@ struct EnemyDefinition {
     float painDuration{0.2F};
     float radius{0.4F};
     float height{1.8F};
+    std::filesystem::path model;
+    std::unordered_map<std::string, std::string> animations;
+    glm::vec3 modelOffset{0.0F, -0.9F, 0.0F};
+    float modelScale{1.0F};
+    float forwardAxisCorrectionDegrees{0.0F};
 };
 
 struct WeaponInstance {
@@ -111,6 +118,7 @@ struct EnemyActor {
     std::string name;
     std::string definitionId;
     std::vector<std::size_t> primitiveIndices;
+    std::vector<std::size_t> skinnedPrimitiveIndices;
     glm::vec3 spawnPosition{};
     glm::vec3 position{};
     glm::vec3 forward{0.0F, 0.0F, -1.0F};
@@ -119,6 +127,7 @@ struct EnemyActor {
     EnemyState state{EnemyState::Idle};
     bool startsActive{true};
     bool active{true};
+    std::string group;
     float stateTimer{0.0F};
     float attackCooldown{0.0F};
     float lostSightTimer{0.0F};

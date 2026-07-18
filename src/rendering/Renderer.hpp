@@ -14,4 +14,5 @@ public:
 
 private:
     Shader staticMeshShader_;
+    Shader skinnedMeshShader_;
 };

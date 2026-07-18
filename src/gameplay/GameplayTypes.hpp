@@ -49,6 +49,7 @@ struct GameplayEntityDefinition {
     std::string name;
     glm::mat4 authoredWorldTransform{1.0F};
     std::vector<std::size_t> primitiveIndices;
+    std::vector<std::size_t> skinnedPrimitiveIndices;
     std::string targetName;
     GameplayEventType enterEvent{GameplayEventType::Activate};
     GameplayEventType exitEvent{GameplayEventType::Deactivate};
@@ -74,4 +75,5 @@ struct GameplayEntityDefinition {
     int restoreArmor{0};
     std::string enemyType;
     bool startsActive{true};
+    std::string group;
 };
