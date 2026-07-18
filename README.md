@@ -4,6 +4,8 @@ Reflex Engine is a small C++20, cross-platform 3D game engine for first-person
 shooters inspired by the 1999-2004 era. Linux is the first target; SDL and CMake
 keep the platform shell portable to Windows.
 
+![Reflex Engine screenshot](https://github.com/wgallios/reflex/blob/master/screenshots/screenshot1.jpg?raw=true)
+
 ## Phase 6 scope
 
 Phase 6 adds four-weight glTF skeletal animation and GPU skinning, Recast/Detour
