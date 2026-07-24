@@ -10,6 +10,8 @@
 
 namespace {
 constexpr glm::vec3 worldUp{0.0F, 1.0F, 0.0F};
+constexpr float duplicatePlaneAlignment = 0.999F;
+constexpr float blockingPlaneEpsilon = 0.000001F;
 
 glm::vec3 moveToward(const glm::vec3& current, const glm::vec3& target,
                      const float maximumDelta) {
@@ -147,19 +149,36 @@ void PlayerController::moveAndSlide(glm::vec3 displacement, const bool allowStep
             attemptStep(horizontal)) {
             return;
         }
-        if (glm::dot(displacement, hit.normal) < -0.000001F && planeCount < 3) {
-            bool duplicatePlane = false;
+        if (glm::dot(displacement, hit.normal) < -blockingPlaneEpsilon) {
+            int duplicatePlane = -1;
             for (int plane = 0; plane < planeCount; ++plane) {
-                duplicatePlane = duplicatePlane ||
-                    std::abs(glm::dot(planes[plane], hit.normal)) > 0.999F;
+                const bool sameWalkableSurface =
+                    isWalkable(planes[plane]) && isWalkable(hit.normal);
+                if (sameWalkableSurface ||
+                    glm::dot(planes[plane], hit.normal) > duplicatePlaneAlignment) {
+                    duplicatePlane = plane;
+                    break;
+                }
             }
-            if (!duplicatePlane) {
+
+            if (duplicatePlane >= 0) {
+                // Adjacent walkable triangles describe one floor manifold even when
+                // their normals differ at a seam. Use the latest blocking normal so
+                // the capsule does not mistake triangulated ground for a corner.
+                planes[duplicatePlane] = hit.normal;
+            } else if (planeCount < 3) {
                 planes[planeCount++] = hit.normal;
             }
         }
         if (planeCount == 1) {
-            displacement -= planes[0] * glm::dot(displacement, planes[0]);
-            velocity_ -= planes[0] * std::min(glm::dot(velocity_, planes[0]), 0.0F);
+            const float displacementIntoPlane = glm::dot(displacement, planes[0]);
+            if (displacementIntoPlane < 0.0F) {
+                displacement -= planes[0] * displacementIntoPlane;
+            }
+            const float velocityIntoPlane = glm::dot(velocity_, planes[0]);
+            if (velocityIntoPlane < 0.0F) {
+                velocity_ -= planes[0] * velocityIntoPlane;
+            }
         } else if (planeCount == 2) {
             glm::vec3 crease = glm::cross(planes[0], planes[1]);
             const float creaseLength = glm::length(crease);

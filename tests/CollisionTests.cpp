@@ -167,6 +167,60 @@ int main() {
         return fail("Player did not slide along and stop at the wall.");
     }
 
+    std::vector<Triangle> unevenFloor;
+    constexpr int unevenFloorHalfExtent = 12;
+    const auto unevenFloorPoint = [](const int x, const int z) {
+        const float y = 0.04F * std::sin(static_cast<float>(x) * 1.7F) *
+                        std::cos(static_cast<float>(z) * 1.3F);
+        return glm::vec3{static_cast<float>(x), y, static_cast<float>(z)};
+    };
+    for (int z = -unevenFloorHalfExtent; z < unevenFloorHalfExtent; ++z) {
+        for (int x = -unevenFloorHalfExtent; x < unevenFloorHalfExtent; ++x) {
+            const glm::vec3 a = unevenFloorPoint(x, z);
+            const glm::vec3 b = unevenFloorPoint(x + 1, z);
+            const glm::vec3 c = unevenFloorPoint(x + 1, z + 1);
+            const glm::vec3 d = unevenFloorPoint(x, z + 1);
+            unevenFloor.push_back(makeTriangle(a, c, b));
+            unevenFloor.push_back(makeTriangle(a, d, c));
+        }
+    }
+    CollisionWorld unevenFloorWorld;
+    if (!unevenFloorWorld.build(std::move(unevenFloor))) {
+        return fail("Uneven-floor BVH construction failed.");
+    }
+    PlayerController unevenFloorPlayer;
+    if (!unevenFloorPlayer.initialize(unevenFloorWorld, {-10.5F, 0.1F, 0.23F})) {
+        return fail("Uneven-floor player initialization failed.");
+    }
+    PlayerInput unevenFloorInput;
+    unevenFloorInput.movement.y = 1.0F;
+    const glm::vec3 unevenFloorForward{1.0F, 0.0F, 0.0F};
+    const glm::vec3 unevenFloorRight{0.0F, 0.0F, 1.0F};
+    int consecutiveStalledTicks = 0;
+    int maximumStalledTicks = 0;
+    float previousUnevenFloorX = unevenFloorPlayer.position().x;
+    for (int tick = 0; tick < 420; ++tick) {
+        unevenFloorPlayer.simulate(1.0F / 120.0F, unevenFloorInput,
+                                   unevenFloorForward, unevenFloorRight);
+        const float advance = unevenFloorPlayer.position().x - previousUnevenFloorX;
+        previousUnevenFloorX = unevenFloorPlayer.position().x;
+        if (unevenFloorPlayer.velocity().x > 1.0F && advance < 0.0001F) {
+            ++consecutiveStalledTicks;
+            maximumStalledTicks = std::max(maximumStalledTicks, consecutiveStalledTicks);
+        } else {
+            consecutiveStalledTicks = 0;
+        }
+    }
+    if (unevenFloorPlayer.position().x < 5.0F || !unevenFloorPlayer.isGrounded() ||
+        maximumStalledTicks > 12) {
+        std::cerr << "Uneven-floor final position: " << unevenFloorPlayer.position().x << ", "
+                  << unevenFloorPlayer.position().y << ", "
+                  << unevenFloorPlayer.position().z << " grounded "
+                  << unevenFloorPlayer.isGrounded() << " maximum stalled ticks "
+                  << maximumStalledTicks << '\n';
+        return fail("Player became stuck while crossing uneven triangle edges.");
+    }
+
     std::vector<Triangle> stepLevel;
     stepLevel.push_back(makeTriangle({-5.0F, 0.0F, -5.0F}, {5.0F, 0.0F, 5.0F},
                                      {5.0F, 0.0F, -5.0F}));
